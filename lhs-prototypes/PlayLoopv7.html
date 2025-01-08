@@ -1,0 +1,886 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Buyers & Sellers - Free Movement with Collectible Resources</title>
+
+  <!-- 
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    BRIEF GAME DESCRIPTION
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    This simulation extends the free-movement version so that resources
+    (e.g., "FISH", "MEAT", etc.) are scattered around the map. The player's
+    circle agent can move freely with arrow keys and collect these resources
+    by moving over them. When collected, the resource disappears, and the
+    stock of a corresponding circle building (on the loop) increases.
+
+    OTHER FEATURES (unchanged):
+      1) AI agents move around a looped road automatically.
+      2) Loop "Price" from 0..20 for each building.
+      3) Buyer willingness to pay (WTP), e.g. 10.
+      4) Circle buildings can move if their stock is nonzero, etc.
+      5) Player agent transacts like a normal Buyer but moves freely.
+      6) "Speed Up" (x2) and "Slow Down" (/2) buttons control the agent speed.
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  -->
+
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      overflow: hidden; /* No scrollbars */
+      background: #fafafa; /* Light background color */
+    }
+    #gameCanvas {
+      display: block;
+      background-color: #eee; /* Canvas background */
+    }
+    /* Info panel for showing money */
+    #info {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      font: 16px sans-serif;
+      background: rgba(255, 255, 255, 0.8);
+      padding: 8px;
+      border-radius: 4px;
+    }
+    /* Controls panel for building product & shape selection */
+    #controls {
+      position: absolute;
+      top: 50px;
+      left: 10px;
+      font: 14px sans-serif;
+      background: rgba(255, 255, 255, 0.9);
+      padding: 5px;
+      border-radius: 4px;
+    }
+    /* Speed Up & Slow Down Button styling */
+    .speedButton {
+      margin-top: 10px;
+      margin-right: 5px;
+      padding: 6px 12px;
+      font-size: 14px;
+      cursor: pointer;
+      border: 1px solid #666;
+      background: #ccc;
+      border-radius: 4px;
+    }
+  </style>
+</head>
+<body>
+  <!-- The main Canvas where the game is rendered -->
+  <canvas id="gameCanvas"></canvas>
+
+  <!-- An info panel that shows the player's current money total -->
+  <div id="info">Money: <span id="moneyDisplay">0</span></div>
+
+  <!-- A small panel with dropdowns to select the product and shape of new buildings 
+       + Speed Up / Slow Down buttons -->
+  <div id="controls">
+    <label for="buildingProduct">Building product:</label>
+    <select id="buildingProduct">
+      <option value="fish">Fish</option>
+      <option value="vegetables">Vegetables</option>
+      <option value="fruit">Fruit</option>
+      <option value="meat">Meat</option>
+      <option value="dairy">Dairy</option>
+    </select>
+
+    <br /><br />
+
+    <label for="buildingShape">Building shape:</label>
+    <select id="buildingShape">
+      <option value="circle">Circle (Buyer)</option>
+      <option value="square">Square (Seller)</option>
+    </select>
+
+    <p style="font-size:12px; max-width:150px;">
+      Click on the canvas to place a building or delete an existing building.
+    </p>
+
+    <button id="speedUpBtn" class="speedButton">Speed Up</button>
+    <button id="slowDownBtn" class="speedButton">Slow Down</button>
+  </div>
+  
+  <!-- A short beep sound in base64 format, cloned & played on each transaction. -->
+  <audio id="beepSound">
+    <source 
+      src="data:audio/wav;base64,UklGRsgAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YRAAAACAgICAgICAgCAgICAgICAgICAgICAgIDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA=" 
+      type="audio/wav">
+    Your browser does not support the audio element.
+  </audio>
+
+  <script>
+    /*************************************************
+     * 1) SETUP CANVAS
+     *************************************************/
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+
+    function resizeCanvas() {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+    }
+    window.addEventListener('resize', resizeCanvas);
+    resizeCanvas();
+
+    // Attempt to unlock audio on first user click (browsers block sound autoplay)
+    document.addEventListener('click', () => {
+      const beepSound = document.getElementById('beepSound');
+      beepSound.currentTime = 0;
+      beepSound.play().catch(err => console.log('Audio unlock attempt failed:', err));
+    }, { once: true });
+
+    /*************************************************
+     * 2) ROAD (LOOP) DATA
+     *************************************************
+     * We define an array of points that form a closed loop for the AI agents.
+     * They will move around it based on a "distance" value.
+     * The player agent is not restricted to this loop.
+     */
+    const roadPoints = [
+      { x: 150, y: 300 },
+      { x: 300, y: 220 },
+      { x: 400, y: 320 },
+      { x: 550, y: 280 },
+      { x: 700, y: 350 },
+      { x: 600, y: 450 },
+      { x: 450, y: 500 },
+      { x: 300, y: 400 },
+      // Re-add the first point to close the loop
+      { x: 150, y: 300 }
+    ];
+
+    let roadSegments = [];
+    let totalRoadLength = 0;
+
+    function initRoadSegments() {
+      roadSegments = [];
+      totalRoadLength = 0;
+      for (let i = 0; i < roadPoints.length - 1; i++) {
+        const p1 = roadPoints[i];
+        const p2 = roadPoints[i + 1];
+        const dx = p2.x - p1.x;
+        const dy = p2.y - p1.y;
+        const length = Math.sqrt(dx*dx + dy*dy);
+        roadSegments.push({
+          start: p1,
+          end: p2,
+          length: length
+        });
+        totalRoadLength += length;
+      }
+    }
+    initRoadSegments();
+
+    // Price function from 0..20, linear across the loop.
+    function getPriceAtDistance(distance) {
+      return 20 * (distance / totalRoadLength);
+    }
+
+    /*************************************************
+     * 3) AGENTS (BUYERS & SELLERS)
+     *************************************************
+     * - Most agents are AI-based, with a "distance" along the loop.
+     * - One special agent is "player-controlled" using (x,y) free movement.
+     */
+
+    const productList = ['fish', 'vegetables', 'fruit', 'meat', 'dairy'];
+    const agentTypes = ['B', 'S'];
+
+    // A color map with lighter colors for readability
+    const productColorMap = {
+      fish: '#7ca0dc',        // lighter "darkblue"
+      vegetables: '#94e094',  // lighter "green"
+      fruit: '#ffd080',       // lighter "orange"
+      meat: '#d2a48f',        // lighter "brown"
+      dairy: '#b399d6',       // lighter "purple"
+      gray: '#cccccc'         // light gray
+    };
+
+    // Layout config for spacing (for AI agents)
+    const agentsPerProduct = 4;
+    const withinProductSpacing = 30;
+    const betweenProductSpacing = 60;
+
+    // Agent speeds can be changed by Speed Up / Slow Down buttons
+    let agentSpeed = 1; // px/frame
+
+    // Suppose all buyers have the same willingness to pay (WTP).
+    const buyerWillingnessToPay = 10;
+
+    // The main array of agents
+    const agents = [];
+
+    createClusteredAgents();
+
+    function createClusteredAgents() {
+      let currentDist = 0;
+      productList.forEach(product => {
+        // For each product, create a certain number of AI agents
+        for (let i = 0; i < agentsPerProduct; i++) {
+          const type = agentTypes[Math.floor(Math.random() * agentTypes.length)];
+          const originalColor = productColorMap[product];  
+          agents.push({
+            // AI agents use distance:
+            distance: currentDist,
+            product: product,        
+            color: originalColor,    // agent's original color
+            currentColor: originalColor, 
+            type: type,
+            isInRangeBuilding: null,
+            hasTransactedThisLoop: false,
+            controlled: false,       // NOT player-controlled
+          });
+          // Space them out
+          currentDist += withinProductSpacing;
+        }
+        // After finishing this product, leave a bigger gap
+        currentDist += betweenProductSpacing;
+      });
+    }
+
+    /*************************************************
+     * 3.1) PLAYER-CONTROLLED AGENT (FREE MOVEMENT)
+     *************************************************
+     * We'll add a single Buyer that can move freely around the canvas
+     * in 2D, using the arrow keys (left, right, up, down).
+     */
+    const userAgent = {
+      // Start somewhere on screen, e.g. top-left
+      x: 100,
+      y: 100,
+      product: 'fish',                 // pick any product
+      color: productColorMap.fish,
+      currentColor: productColorMap.fish,
+      type: 'B',                       // buyer
+      isInRangeBuilding: null,
+      hasTransactedThisLoop: false,
+      controlled: true                // Mark as the player-controlled agent
+    };
+    agents.push(userAgent); // Add to the main array of agents
+
+    // We'll track whether the arrow keys are currently pressed
+    const keysDown = {
+      left: false,
+      right: false,
+      up: false,
+      down: false
+    };
+
+    // Listen for key down / up events
+    window.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowLeft')  keysDown.left  = true;
+      if (e.key === 'ArrowRight') keysDown.right = true;
+      if (e.key === 'ArrowUp')    keysDown.up    = true;
+      if (e.key === 'ArrowDown')  keysDown.down  = true;
+    });
+
+    window.addEventListener('keyup', (e) => {
+      if (e.key === 'ArrowLeft')  keysDown.left  = false;
+      if (e.key === 'ArrowRight') keysDown.right = false;
+      if (e.key === 'ArrowUp')    keysDown.up    = false;
+      if (e.key === 'ArrowDown')  keysDown.down  = false;
+    });
+
+    /*************************************************
+     * 4) BUILDINGS (CIRCLE vs. SQUARE)
+     *************************************************/
+    const buildings = [];
+    let money = 0;
+    const moneyDisplay = document.getElementById('moneyDisplay');
+
+    // Pop-up messages for transactions
+    const popUps = [];
+
+    // Building controls
+    const buildingProductSelect = document.getElementById('buildingProduct');
+    const buildingShapeSelect   = document.getElementById('buildingShape');
+
+    // Movement control for circle buildings
+    const BUILDING_MOVE_DURATION = 180; // frames (~3 seconds at 60 fps)
+
+    // On canvas click => either remove building or place a new one
+    canvas.addEventListener('click', (e) => {
+      const rect = canvas.getBoundingClientRect();
+      const mouseX = e.clientX - rect.left;
+      const mouseY = e.clientY - rect.top;
+
+      // 1) Check if click is on an existing building => remove it
+      let clickedBuildingIndex = -1;
+      for (let i = 0; i < buildings.length; i++) {
+        const b = buildings[i];
+        if (isClickOnBuilding(mouseX, mouseY, b)) {
+          clickedBuildingIndex = i;
+          break;
+        }
+      }
+
+      if (clickedBuildingIndex >= 0) {
+        buildings.splice(clickedBuildingIndex, 1);
+        return; // done
+      }
+
+      // 2) Otherwise, place a new building
+      //    We'll still project the click onto the loop to get its 
+      //    "distance" for the building, which affects the building's price.
+      let bestDist = Infinity;
+      let bestProj = null;
+      let bestSeg = null;
+
+      for (let i = 0; i < roadSegments.length; i++) {
+        const seg = roadSegments[i];
+        const { start, end } = seg;
+        const proj = projectPointOnSegment(
+          mouseX, mouseY, start.x, start.y, end.x, end.y
+        );
+        const dx = proj.x - mouseX;
+        const dy = proj.y - mouseY;
+        const dist = Math.sqrt(dx*dx + dy*dy);
+        if (dist < bestDist) {
+          bestDist = dist;
+          bestProj = proj;
+          bestSeg = seg;
+        }
+      }
+
+      let buildingDistAlongLoop = 0;
+      let traveledSoFar = 0;
+      for (let i = 0; i < roadSegments.length; i++) {
+        const seg = roadSegments[i];
+        if (seg === bestSeg) {
+          buildingDistAlongLoop = traveledSoFar + 
+            (bestSeg.length * bestProj.t);
+          break;
+        } else {
+          traveledSoFar += seg.length;
+        }
+      }
+
+      const offsetDistance = 15;
+      const dirX = bestSeg.end.x - bestSeg.start.x;
+      const dirY = bestSeg.end.y - bestSeg.start.y;
+      const segLen = Math.sqrt(dirX*dirX + dirY*dirY);
+      const nx = -(dirY / segLen);
+      const ny =  (dirX / segLen);
+      const buildingX = bestProj.x + nx * offsetDistance;
+      const buildingY = bestProj.y + ny * offsetDistance;
+
+      const chosenProduct = buildingProductSelect.value;
+      const chosenShape   = buildingShapeSelect.value;
+      const buildingColor = productColorMap[chosenProduct];
+
+      const buildingPrice = getPriceAtDistance(buildingDistAlongLoop);
+
+      if (chosenShape === 'circle') {
+        buildings.push({
+          x: buildingX,
+          y: buildingY,
+          distance: buildingDistAlongLoop,
+          price: buildingPrice,
+          product: chosenProduct,
+          shape: 'circle',
+          color: buildingColor,
+          currentColor: buildingColor,
+          hasTransactedThisLoop: false,
+          stock: 0,
+          radius: 15,
+          offsetN: { x: nx, y: ny },
+          moveActive: false,
+          moveTimer: 0,
+          moveDirection: 0
+        });
+      } else {
+        buildings.push({
+          x: buildingX,
+          y: buildingY,
+          distance: buildingDistAlongLoop,
+          price: buildingPrice,
+          product: chosenProduct,
+          shape: 'square',
+          color: buildingColor,
+          currentColor: buildingColor,
+          hasTransactedThisLoop: false,
+          radius: 15,
+          offsetN: { x: nx, y: ny },
+          moveActive: false,
+          moveTimer: 0,
+          moveDirection: 0
+        });
+      }
+    });
+
+    function isClickOnBuilding(mx, my, building) {
+      const dx = mx - building.x;
+      const dy = my - building.y;
+      const dist = Math.sqrt(dx*dx + dy*dy);
+      return dist <= building.radius;
+    }
+
+    // Project a point (px,py) onto a line segment (sx1,sy1)-(sx2,sy2)
+    function projectPointOnSegment(px, py, sx1, sy1, sx2, sy2) {
+      const vx = sx2 - sx1;
+      const vy = sy2 - sy1;
+      const wx = px - sx1;
+      const wy = py - sy1;
+      const c1 = wx*vx + wy*vy;
+      const c2 = vx*vx + vy*vy;
+      let t = c1 / c2;
+      t = Math.max(0, Math.min(1, t)); 
+      return {
+        x: sx1 + t*vx,
+        y: sy1 + t*vy,
+        t
+      };
+    }
+
+    /*************************************************
+     * 5) SPEED UP / SLOW DOWN BUTTONS
+     *************************************************/
+    const speedUpBtn   = document.getElementById('speedUpBtn');
+    const slowDownBtn  = document.getElementById('slowDownBtn');
+
+    speedUpBtn.addEventListener('click', () => {
+      agentSpeed *= 2;
+    });
+    slowDownBtn.addEventListener('click', () => {
+      agentSpeed = Math.max(0.1, agentSpeed / 2);
+    });
+
+    /*************************************************
+     * 6) SOUND EFFECT
+     *************************************************/
+    const beepSound = document.getElementById('beepSound');
+    function playBeep() {
+      const clone = beepSound.cloneNode(true);
+      clone.currentTime = 0;
+      clone.play().catch(err => console.log('Audio blocked:', err));
+    }
+
+    /*************************************************
+     * 7) RESOURCES SCATTERED ON THE MAP
+     *************************************************
+     * We'll create an array of resource items. Each item:
+     *   { x, y, product, quantity, text }
+     * The player agent can collect them by moving on top of them.
+     * When collected, we remove that resource and add to the stock
+     * of a matching circle building (if one exists).
+     */
+    const resources = [];
+    spawnRandomResources(10); // For example, place 10 random resources
+
+    function spawnRandomResources(count) {
+      const possibleProducts = ['fish','vegetables','fruit','meat','dairy'];
+      for (let i=0; i<count; i++) {
+        const prod = possibleProducts[Math.floor(Math.random() * possibleProducts.length)];
+
+        resources.push({
+          x: Math.random() * canvas.width,
+          y: Math.random() * canvas.height,
+          product: prod,
+          quantity: 1,        // Each resource increments stock by 1
+          text: prod.toUpperCase() // e.g., "FISH"
+        });
+      }
+    }
+
+    /*************************************************
+     * 8) ANIMATION & GAME LOOP
+     *************************************************/
+    // Transaction constants
+    const SELLER_COST     = 5;   
+    const BUYER_PAYMENT   = 10;  
+    const BUYER_STOCK_USE = 1;   
+
+    function animate() {
+      update();
+      draw();
+      requestAnimationFrame(animate);
+    }
+
+    function update() {
+      // 8A) Update each agent
+      agents.forEach(agent => {
+        if (agent.controlled) {
+          // PLAYER AGENT => free 2D movement
+          if (keysDown.left)  agent.x -= agentSpeed;
+          if (keysDown.right) agent.x += agentSpeed;
+          if (keysDown.up)    agent.y -= agentSpeed;
+          if (keysDown.down)  agent.y += agentSpeed;
+
+          // Optional: clamp to canvas
+          if (agent.x < 0) agent.x = 0;
+          if (agent.y < 0) agent.y = 0;
+          if (agent.x > canvas.width)  agent.x = canvas.width;
+          if (agent.y > canvas.height) agent.y = canvas.height;
+
+          // Check for resource pickup
+          collectNearbyResources(agent);
+
+        } else {
+          // AI AGENT => move along the loop
+          agent.distance += agentSpeed;
+          // If crossing start => new loop => reset
+          if (agent.distance >= totalRoadLength) {
+            agent.distance -= totalRoadLength;
+            agent.hasTransactedThisLoop = false;
+            agent.currentColor = agent.color;
+          }
+        }
+
+        // 8B) Check building interactions (both user agent + AI)
+        buildings.forEach(building => {
+          if (building.hasTransactedThisLoop) return; // skip if used this loop
+
+          // If building price > WTP => skip for buyers
+          if (agent.type === 'B' && building.price > buyerWillingnessToPay) {
+            return;
+          }
+
+          const productMatch = (agent.product === building.product);
+          const shapeMatch   =
+            (agent.type === 'B' && building.shape === 'circle') ||
+            (agent.type === 'S' && building.shape === 'square');
+
+          if (!productMatch || !shapeMatch || agent.hasTransactedThisLoop) {
+            return; // mismatch or agent already transacted
+          }
+
+          // Evaluate distance to building
+          const agentPos = getAgentPosition(agent);
+          const dx = building.x - agentPos.x;
+          const dy = building.y - agentPos.y;
+          const dist = Math.sqrt(dx*dx + dy*dy);
+
+          const threshold = 25;
+          if (dist < threshold) {
+            // DO TRANSACTION
+            if (agent.type === 'B') {
+              building.stock -= BUYER_STOCK_USE;
+              money += BUYER_PAYMENT;
+              spawnPopup(building.x, building.y, +BUYER_PAYMENT);
+            } else {
+              money -= SELLER_COST;
+              spawnPopup(building.x, building.y, -SELLER_COST);
+            }
+            moneyDisplay.textContent = money;
+            playBeep();
+
+            // Mark agent & building as done => both turn gray
+            agent.hasTransactedThisLoop = true;
+            agent.currentColor = 'gray';
+            agent.isInRangeBuilding = building;
+
+            building.hasTransactedThisLoop = true;
+            building.currentColor = productColorMap.gray;
+
+            // If circle building, trigger building movement based on stock
+            if (building.shape === 'circle') {
+              if (building.stock < 0) {
+                building.moveDirection = 1; // toward end
+              } else if (building.stock > 0) {
+                building.moveDirection = -1; // toward start
+              } else {
+                building.moveDirection = 0;
+              }
+              if (building.moveDirection !== 0) {
+                building.moveActive = true;
+                building.moveTimer = BUILDING_MOVE_DURATION;
+              }
+            }
+          }
+        });
+      });
+
+      // 8C) Check if all AI agents are ready (no transactedThisLoop).
+      //     That triggers a "loop reset" for buildings + user agent color reset.
+      const aiAgents = agents.filter(a => !a.controlled);
+      const allAIready = aiAgents.every(a => !a.hasTransactedThisLoop);
+      if (allAIready && aiAgents.length > 0) {
+        buildings.forEach(b => {
+          b.hasTransactedThisLoop = false;
+          b.currentColor = b.color;
+          // If circle building has nonzero stock => move again
+          if (b.shape === 'circle' && b.stock !== 0) {
+            b.moveDirection = (b.stock < 0) ? 1 : -1;
+            b.moveActive = true;
+            b.moveTimer = BUILDING_MOVE_DURATION;
+          }
+        });
+        // Reset user agent transaction status & color
+        userAgent.hasTransactedThisLoop = false;
+        userAgent.currentColor = userAgent.color;
+      }
+
+      // 8D) SHIFT BUILDINGS based on their stock sign
+      buildings.forEach(b => {
+        if (b.shape === 'circle' && b.moveActive && b.moveDirection !== 0) {
+          if (b.moveTimer > 0) {
+            const shiftSpeed = 0.1;
+            let newDistance = b.distance + b.moveDirection * shiftSpeed;
+            if (newDistance < 0) newDistance = 0;
+            if (newDistance > totalRoadLength) newDistance = totalRoadLength;
+            b.distance = newDistance;
+
+            const { x: newX, y: newY } = getXYfromDistance(b.distance);
+            const offsetDistance = 15; 
+            b.x = newX + b.offsetN.x * offsetDistance;
+            b.y = newY + b.offsetN.y * offsetDistance;
+
+            b.moveTimer--;
+            if (b.moveTimer <= 0) {
+              b.moveActive = false;
+            }
+          }
+        }
+      });
+
+      // 8E) Update pop-ups
+      for (let i = popUps.length - 1; i >= 0; i--) {
+        popUps[i].timer--;
+        if (popUps[i].timer <= 0) {
+          popUps.splice(i, 1);
+        }
+      }
+    }
+
+    // Helper: Return (x,y) for an agent (either free-moving or AI)
+    function getAgentPosition(agent) {
+      if (agent.controlled) {
+        return { x: agent.x, y: agent.y };
+      } else {
+        return getXYfromDistance(agent.distance);
+      }
+    }
+
+    // Helper: Called for user agent => checks if any resource is within range,
+    // then increments stock in a matching building, removes the resource, etc.
+    function collectNearbyResources(agent) {
+      for (let i = resources.length - 1; i >= 0; i--) {
+        const r = resources[i];
+        const dx = r.x - agent.x;
+        const dy = r.y - agent.y;
+        const dist = Math.sqrt(dx*dx + dy*dy);
+        if (dist < 20) { 
+          // We "pick up" this resource => remove from resources array
+          // Then find any circle building that matches r.product
+          // For simplicity, let's just pick the first such building
+          const building = buildings.find(b => 
+            b.shape === 'circle' && b.product === r.product
+          );
+          if (building) {
+            building.stock += r.quantity;
+          }
+          resources.splice(i, 1);
+
+          // Optionally, show a small pop-up
+          spawnPopup(agent.x, agent.y, `+${r.text}`);
+        }
+      }
+    }
+
+    function spawnPopup(x, y, amount) {
+      popUps.push({
+        x, 
+        y,
+        amount,
+        timer: 60 // ~1 second at 60fps
+      });
+    }
+
+    /*************************************************
+     * 9) DRAWING
+     *************************************************/
+    function draw() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      drawRoad();
+      drawStartLabel();
+      drawBuildings();
+      drawAgents();
+      drawResources();
+      drawPopUps();
+    }
+
+    function drawRoad() {
+      ctx.save();
+      ctx.lineWidth = 6;
+      ctx.strokeStyle = '#999';
+      ctx.beginPath();
+      ctx.moveTo(roadPoints[0].x, roadPoints[0].y);
+      for (let i = 1; i < roadPoints.length; i++) {
+        ctx.lineTo(roadPoints[i].x, roadPoints[i].y);
+      }
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    function drawStartLabel() {
+      const startX = roadPoints[0].x;
+      const startY = roadPoints[0].y;
+      ctx.save();
+      ctx.fillStyle = 'black';
+      ctx.font = 'bold 16px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'bottom';
+      ctx.fillText('START', startX, startY - 10);
+      ctx.restore();
+    }
+
+    // Draw the circle/square buildings
+    function drawBuildings() {
+      buildings.forEach(b => {
+        ctx.save();
+        if (b.shape === 'circle') {
+          ctx.beginPath();
+          ctx.arc(b.x, b.y, b.radius, 0, 2*Math.PI);
+          ctx.fillStyle = b.currentColor; 
+          ctx.fill();
+          ctx.strokeStyle = 'black';
+          ctx.lineWidth = 1;
+          ctx.stroke();
+
+          // Product name near top
+          ctx.font = 'bold 12px sans-serif';
+          ctx.fillStyle = 'black';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'alphabetic';
+          ctx.fillText(b.product, b.x, b.y - (b.radius + 2));
+
+          // Show stock in center
+          ctx.textBaseline = 'middle';
+          ctx.fillText((b.stock ?? 0).toFixed(1), b.x, b.y);
+
+        } else {
+          ctx.translate(b.x, b.y);
+          ctx.beginPath();
+          // Diamond shape
+          ctx.moveTo(0, -b.radius);
+          ctx.lineTo(b.radius, 0);
+          ctx.lineTo(0, b.radius);
+          ctx.lineTo(-b.radius, 0);
+          ctx.closePath();
+          ctx.fillStyle = b.currentColor;
+          ctx.fill();
+          ctx.strokeStyle = 'black';
+          ctx.stroke();
+
+          // Product name near the top
+          ctx.font = 'bold 12px sans-serif';
+          ctx.fillStyle = 'black';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'alphabetic';
+          ctx.fillText(b.product, 0, -(b.radius + 2));
+        }
+        ctx.restore();
+
+        // If building.price > buyerWillingness => "X" above building
+        if (b.price > buyerWillingnessToPay) {
+          ctx.save();
+          ctx.font = 'bold 16px sans-serif';
+          ctx.fillStyle = 'red';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText('X', b.x, b.y - (b.radius + 20));
+          ctx.restore();
+        }
+      });
+    }
+
+    // Draw the agents (including the free-movement user agent)
+    function drawAgents() {
+      agents.forEach(agent => {
+        const pos = getAgentPosition(agent);
+        const x   = pos.x;
+        const y   = pos.y;
+
+        ctx.save();
+        ctx.fillStyle = agent.currentColor ? agent.currentColor 
+                                           : productColorMap.gray;
+
+        if (agent.type === 'B') {
+          // Buyer => draw circle
+          ctx.beginPath();
+          ctx.arc(x, y, 10, 0, 2*Math.PI);
+          ctx.fill();
+          ctx.strokeStyle = 'black';
+          ctx.lineWidth = 1;
+          ctx.stroke();
+        } else {
+          // Seller => draw square
+          ctx.translate(x, y);
+          ctx.beginPath();
+          ctx.moveTo(-10, -10);
+          ctx.lineTo( 10, -10);
+          ctx.lineTo( 10,  10);
+          ctx.lineTo(-10,  10);
+          ctx.closePath();
+          ctx.fill();
+          ctx.strokeStyle = 'black';
+          ctx.stroke();
+        }
+
+        ctx.restore();
+      });
+    }
+
+    // Draw the scattered resources as text
+    function drawResources() {
+      resources.forEach(r => {
+        ctx.save();
+        ctx.font = 'bold 14px sans-serif';
+        ctx.fillStyle = 'blue';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(r.text, r.x, r.y);
+        ctx.restore();
+      });
+    }
+
+    // Floating pop-ups for transactions or pickups
+    function drawPopUps() {
+      popUps.forEach(p => {
+        const rise = (60 - p.timer) * 0.5; 
+        const txt = (typeof p.amount === 'number' && p.amount > 0) 
+                    ? ('+' + p.amount) : p.amount;
+        
+        ctx.save();
+        ctx.fillStyle = (typeof p.amount === 'number' && p.amount >= 0)
+                        ? 'green' : 'red';
+        // If it's a string like "+FISH", let's just use 'green' for clarity
+        if (typeof p.amount === 'string') {
+          ctx.fillStyle = 'green';
+        }
+        ctx.font = 'bold 14px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'bottom';
+        ctx.fillText(txt, p.x, p.y - 15 - rise);
+        ctx.restore();
+      });
+    }
+
+    // Convert distance along the loop to (x,y) for AI agents
+    function getXYfromDistance(distance) {
+      distance = distance % totalRoadLength;
+      for (let seg of roadSegments) {
+        if (distance <= seg.length) {
+          const ratio = distance / seg.length;
+          const x = seg.start.x + ratio*(seg.end.x - seg.start.x);
+          const y = seg.start.y + ratio*(seg.end.y - seg.start.y);
+          return { x, y };
+        } else {
+          distance -= seg.length;
+        }
+      }
+      // fallback
+      const last = roadSegments[roadSegments.length - 1];
+      return { x: last.end.x, y: last.end.y };
+    }
+
+    /*************************************************
+     * 10) START THE LOOP
+     *************************************************/
+    animate();
+  </script>
+</body>
+</html>

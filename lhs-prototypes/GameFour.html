@@ -1,0 +1,847 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Supply/Demand Market Game</title>
+  <style>
+    body {
+      margin: 0;
+      overflow: hidden;
+      background: #222;
+      color: #fff;
+      font-family: sans-serif;
+    }
+    #gameCanvas {
+      background: #333;
+      display: block;
+      margin: 0 auto;
+      border: 1px solid #000;
+      position: absolute;
+      top: 0;
+      left: 0;
+    }
+    #hud {
+      position: absolute;
+      bottom: 20px;
+      left: 20px;
+      background: rgba(0, 0, 0, 0.6);
+      padding: 10px;
+      border-radius: 4px;
+    }
+    #hud .label {
+      font-weight: bold;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="gameCanvas" width="1600" height="1200"></canvas>
+  <div id="hud">
+    <div>
+      <span class="label">Hunger:</span> 
+      <span id="hungerValue">100</span>
+    </div>
+    <div>
+      <span class="label">Money:</span> 
+      <span id="moneyValue">0</span>
+    </div>
+    <div>
+      <span class="label">Controls:</span>
+    </div>
+    <div>
+      Arrow Keys = Move<br />
+      Q = Attack (kill enemy if close)<br />
+      W = Place Brick<br />
+      E = Eat Apple<br />
+      R = Add Supplier (to closest demand)<br />
+      T = Make Deals
+    </div>
+  </div>
+
+  <script>
+    /*************************************/
+    /**          GAME CONSTANTS        **/
+    /*************************************/
+    const CANVAS_WIDTH = 1600;
+    const CANVAS_HEIGHT = 1200;
+
+    // Safe zone (central circle)
+    const SAFE_ZONE_RADIUS = 300;
+
+    // Movement speed for the human player
+    const PLAYER_SPEED = 3;
+
+    // How fast the AI "slides" each frame
+    const AI_SLIDE_SPEED = 1.5;
+
+    // Hunger decay
+    const HUNGER_DECAY = 0.01;
+
+    // Minimal distance to consider AI has arrived at target
+    const ARRIVAL_DISTANCE = 20;
+
+    // Outskirts offset for spawns
+    const OUTSKIRT_OFFSET = 40;
+
+    // Maximum number of enemies on screen
+    const MAX_ENEMIES = 10;
+
+    // For preventing overlapping circles of supply/demand
+    const MIN_CIRCLE_SPACING = 30;
+
+    let isPlayerInSafeZone = false; // track if human is in safe zone
+
+    /*************************************/
+    /**       PLAYERS / AI STRUCTS     **/
+    /*************************************/
+    // The first entry (index=0) is the human player; the others are AI.
+    // We add a simple state machine for the AI: idle -> moving -> waiting
+
+    function makeAIPlayer(x, y, color, role) {
+      return {
+        x,
+        y,
+        width: 20,
+        height: 20,
+        color,
+        hunger: 100,
+        money: 0,
+        role,
+        // AI state machine
+        aiState: 'idle',      // 'idle' | 'moving' | 'waiting'
+        targetX: 0,
+        targetY: 0,
+        waitUntil: 0
+      };
+    }
+
+    const allPlayers = [
+      // Human
+      {
+        x: CANVAS_WIDTH / 2,
+        y: CANVAS_HEIGHT / 2,
+        width: 20,
+        height: 20,
+        color: 'lightblue',
+        hunger: 100,
+        money: 0,
+        role: 'human'
+      },
+      // Eater
+      makeAIPlayer(CANVAS_WIDTH / 2 + 30, CANVAS_HEIGHT / 2 + 30, 'magenta', 'eater'),
+      // Fighter
+      makeAIPlayer(CANVAS_WIDTH / 2 - 30, CANVAS_HEIGHT / 2 - 30, 'orange', 'fighter'),
+      // Builder
+      makeAIPlayer(CANVAS_WIDTH / 2 + 60, CANVAS_HEIGHT / 2 - 60, 'green', 'builder')
+    ];
+
+    function getHumanPlayer() {
+      return allPlayers[0];
+    }
+
+    /*************************************/
+    /**       GLOBAL GAME STATE        **/
+    /*************************************/
+    const keys = {
+      ArrowUp: false,
+      ArrowDown: false,
+      ArrowLeft: false,
+      ArrowRight: false
+    };
+
+    let bricks = [];
+    let enemies = [];
+    let collectables = []; // money pickups
+
+    // Market data
+    let demands = [];
+    let supplies = [];
+    let demandCount = 0;
+    let supplyCount = 0;
+
+    // We'll do a 5s cooldown for re-balancing supply when demand > supply
+    let lastMarketBalanceCheck = 0;
+    const MARKET_BALANCE_COOLDOWN = 5000;
+
+    /*************************************/
+    /**        MARKET FUNCTIONS         **/
+    /*************************************/
+    function getRandomAngle() {
+      return Math.random() * Math.PI * 2;
+    }
+
+    // For placing demand/supply circles around center
+    function getNonOverlappingPosition(isDemand) {
+      const maxAttempts = 50;
+      let attempt = 0;
+      while (attempt < maxAttempts) {
+        const baseRadius = 200;
+        const offsetY = isDemand ? -50 : 50;
+        const angle = getRandomAngle();
+        const r = baseRadius;
+        const x = CANVAS_WIDTH / 2 + r * Math.cos(angle);
+        const y = CANVAS_HEIGHT / 2 + offsetY + r * Math.sin(angle);
+
+        // Check distance from existing demands + supplies
+        let valid = true;
+        [...demands, ...supplies].forEach((obj) => {
+          const dx = x - obj.x;
+          const dy = y - obj.y;
+          const dist = Math.sqrt(dx * dx + dy * dy);
+          if (dist < MIN_CIRCLE_SPACING) {
+            valid = false;
+          }
+        });
+        if (valid) {
+          return { x, y };
+        }
+        attempt++;
+      }
+      // fallback if too many tries
+      return {
+        x: CANVAS_WIDTH / 2,
+        y: CANVAS_HEIGHT / 2 + (isDemand ? -200 : 200)
+      };
+    }
+
+    function addDemander(good, price, ownerIndex) {
+      const pos = getNonOverlappingPosition(true);
+      demands.push({
+        good,
+        price,
+        ownerIndex,
+        x: pos.x,
+        y: pos.y
+      });
+      demandCount++;
+    }
+
+    function addSupplier(good, price, ownerIndex) {
+      const pos = getNonOverlappingPosition(false);
+      supplies.push({
+        good,
+        price,
+        ownerIndex,
+        x: pos.x,
+        y: pos.y
+      });
+      supplyCount++;
+    }
+
+    function makeDeals() {
+      const demandsToRemove = new Set();
+      const suppliesToRemove = new Set();
+
+      for (let i = 0; i < demands.length; i++) {
+        const d = demands[i];
+        if (demandsToRemove.has(i)) continue;
+
+        for (let j = 0; j < supplies.length; j++) {
+          const s = supplies[j];
+          if (suppliesToRemove.has(j)) continue;
+
+          if (d.good === s.good) {
+            // cost is d.price
+            const cost = d.price;
+            // demander pays
+            allPlayers[d.ownerIndex].money = Math.max(0, allPlayers[d.ownerIndex].money - cost);
+            // supplier earns
+            allPlayers[s.ownerIndex].money += cost;
+
+            demandsToRemove.add(i);
+            suppliesToRemove.add(j);
+            break; // move to next demand
+          }
+        }
+      }
+
+      demands = demands.filter((_, i) => !demandsToRemove.has(i));
+      supplies = supplies.filter((_, i) => !suppliesToRemove.has(i));
+
+      playActionAnimationAndSound(getHumanPlayer());
+    }
+
+    /*************************************/
+    /**        ENEMY BEHAVIOR          **/
+    /*************************************/
+    // 2) Enemies should move randomly, then stop for 5s, repeat.
+    //    We no longer target the player.
+
+    function spawnEnemy() {
+      if (enemies.length >= MAX_ENEMIES) return;
+
+      const side = Math.floor(Math.random() * 4);
+      let x, y;
+      switch (side) {
+        case 0:
+          x = Math.random() * CANVAS_WIDTH;
+          y = -OUTSKIRT_OFFSET;
+          break;
+        case 1:
+          x = Math.random() * CANVAS_WIDTH;
+          y = CANVAS_HEIGHT + OUTSKIRT_OFFSET;
+          break;
+        case 2:
+          x = -OUTSKIRT_OFFSET;
+          y = Math.random() * CANVAS_HEIGHT;
+          break;
+        case 3:
+          x = CANVAS_WIDTH + OUTSKIRT_OFFSET;
+          y = Math.random() * CANVAS_HEIGHT;
+          break;
+      }
+      enemies.push(createEnemy(x, y));
+    }
+
+    function createEnemy(x, y) {
+      // We'll store an internal state for each enemy:
+      // state: 'moving' or 'waiting'
+      // nextStateTime: time in ms when it should toggle
+      // dx, dy: direction
+
+      return {
+        x,
+        y,
+        width: 20,
+        height: 20,
+        color: 'red',
+        state: 'moving',
+        dx: 0,
+        dy: 0,
+        nextStateTime: 0
+      };
+    }
+
+    // Helper to set a random direction for the enemy
+    function setRandomDirection(enemy) {
+      // pick random angle
+      const angle = Math.random() * 2 * Math.PI;
+      // pick random speed, e.g. up to 1.5
+      const speed = Math.random() * 1.5 + 0.5; // 0.5..2
+      enemy.dx = Math.cos(angle) * speed;
+      enemy.dy = Math.sin(angle) * speed;
+    }
+
+    function updateEnemy(enemy, now) {
+      // If it's time to switch states, do it
+      if (now >= enemy.nextStateTime) {
+        if (enemy.state === 'moving') {
+          // switch to waiting
+          enemy.state = 'waiting';
+          enemy.dx = 0;
+          enemy.dy = 0;
+          enemy.nextStateTime = now + 5000; // wait 5s
+        } else {
+          // switch to moving
+          enemy.state = 'moving';
+          setRandomDirection(enemy);
+          // Move for some random duration (2..5 seconds)
+          const moveTime = 2000 + Math.random() * 3000;
+          enemy.nextStateTime = now + moveTime;
+        }
+      }
+
+      // If moving, update position
+      if (enemy.state === 'moving') {
+        enemy.x += enemy.dx;
+        enemy.y += enemy.dy;
+      }
+
+      // keep them in bounds (optional clamp or bounce)
+      if (enemy.x < -50) enemy.x = -50;
+      if (enemy.x > CANVAS_WIDTH + 50) enemy.x = CANVAS_WIDTH + 50;
+      if (enemy.y < -50) enemy.y = -50;
+      if (enemy.y > CANVAS_HEIGHT + 50) enemy.y = CANVAS_HEIGHT + 50;
+    }
+
+    function updateEnemies(now) {
+      enemies.forEach((enemy) => {
+        updateEnemy(enemy, now);
+      });
+
+      // remove if fully off map, if desired:
+      enemies = enemies.filter((enemy) => {
+        return (
+          enemy.x > -100 &&
+          enemy.x < CANVAS_WIDTH + 100 &&
+          enemy.y > -100 &&
+          enemy.y < CANVAS_HEIGHT + 100
+        );
+      });
+    }
+
+    // Press Q near an enemy => kill it
+    function tryKillNearbyEnemy() {
+      const human = getHumanPlayer();
+      const killRadius = 50;
+      enemies = enemies.filter((enemy) => {
+        const dx = human.x - enemy.x;
+        const dy = human.y - enemy.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        return dist > killRadius;
+      });
+    }
+
+    // AI version: kill enemy if close
+    function tryKillEnemyByAI(ai) {
+      const killRadius = 20;
+      for (let e = 0; e < enemies.length; e++) {
+        const enemy = enemies[e];
+        const dx = ai.x - enemy.x;
+        const dy = ai.y - enemy.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist < killRadius) {
+          enemies.splice(e, 1);
+          return true; // killed one, done
+        }
+      }
+      return false;
+    }
+
+    /*************************************/
+    /**       BRICK / APPLE LOGIC      **/
+    /*************************************/
+    function placeBrick(playerIndex) {
+      const p = allPlayers[playerIndex];
+      const gridSize = 20;
+      const bx = Math.floor(p.x / gridSize) * gridSize;
+      const by = Math.floor(p.y / gridSize) * gridSize;
+      bricks.push({
+        x: bx,
+        y: by,
+        width: gridSize,
+        height: gridSize,
+        color: 'brown'
+      });
+      addDemander('brick', 2, playerIndex);
+    }
+
+    function eatApple(playerIndex) {
+      const p = allPlayers[playerIndex];
+      addDemander('apple', 3, playerIndex);
+      p.hunger = Math.min(p.hunger + 20, 100);
+    }
+
+    // R => Add supplier to the closest demand (for the human only)
+    function addSupplierToClosestDemand(playerIndex) {
+      if (demands.length === 0) return;
+      const p = allPlayers[playerIndex];
+      let minDist = Infinity;
+      let closest = null;
+      for (let i = 0; i < demands.length; i++) {
+        const d = demands[i];
+        const dx = p.x - d.x;
+        const dy = p.y - d.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist < minDist) {
+          minDist = dist;
+          closest = d;
+        }
+      }
+      if (closest) {
+        addSupplier(closest.good, closest.price, playerIndex);
+      }
+    }
+
+    /*************************************/
+    /**       COLLECTABLES LOGIC       **/
+    /*************************************/
+    function spawnCollectable() {
+      if (Math.random() < 0.5) {
+        let x = Math.random() * CANVAS_WIDTH;
+        let y = Math.random() < 0.5 ? -OUTSKIRT_OFFSET : CANVAS_HEIGHT + OUTSKIRT_OFFSET;
+        collectables.push({ x, y, width: 10, height: 10, color: 'gold' });
+      } else {
+        let x = Math.random() < 0.5 ? -OUTSKIRT_OFFSET : CANVAS_WIDTH + OUTSKIRT_OFFSET;
+        let y = Math.random() * CANVAS_HEIGHT;
+        collectables.push({ x, y, width: 10, height: 10, color: 'gold' });
+      }
+    }
+
+    function updateCollectables() {
+      collectables = collectables.filter((c) => {
+        let keep = true;
+        allPlayers.forEach((p) => {
+          if (keep) {
+            const dx = p.x - c.x;
+            const dy = p.y - c.y;
+            if (Math.abs(dx) < 15 && Math.abs(dy) < 15) {
+              // "Pickup"
+              p.money += 5;
+              keep = false;
+            }
+          }
+        });
+        return keep;
+      });
+    }
+
+    /*************************************/
+    /**          AI BEHAVIOR           **/
+    /*************************************/
+    // fighter: slides to nearest enemy, kill, wait
+    // eater: slides to random pos in safe zone, eat apple, wait
+    // builder: slides to random pos, place brick, wait
+
+    function findNearestEnemy(ai) {
+      let minDist = Infinity;
+      let nearest = null;
+      enemies.forEach((enemy) => {
+        const dx = ai.x - enemy.x;
+        const dy = ai.y - enemy.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist < minDist) {
+          minDist = dist;
+          nearest = enemy;
+        }
+      });
+      return nearest;
+    }
+
+    function moveAI(ai) {
+      const dx = ai.targetX - ai.x;
+      const dy = ai.targetY - ai.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist < ARRIVAL_DISTANCE) {
+        return true; // arrived
+      }
+      const move = Math.min(dist, AI_SLIDE_SPEED);
+      ai.x += (dx / dist) * move;
+      ai.y += (dy / dist) * move;
+      return false;
+    }
+
+    function setWaiting(ai, now, ms=5000) {
+      ai.aiState = 'waiting';
+      ai.waitUntil = now + ms;
+    }
+
+    function setMoving(ai, x, y) {
+      ai.aiState = 'moving';
+      ai.targetX = x;
+      ai.targetY = y;
+    }
+
+    function randomPositionInSafeZone() {
+      const angle = Math.random() * 2 * Math.PI;
+      // random radius up to SAFE_ZONE_RADIUS
+      const r = Math.random() * (SAFE_ZONE_RADIUS - 50);
+      const centerX = CANVAS_WIDTH / 2;
+      const centerY = CANVAS_HEIGHT / 2;
+      return {
+        x: centerX + Math.cos(angle) * r,
+        y: centerY + Math.sin(angle) * r
+      };
+    }
+
+    function randomPositionInMap() {
+      return {
+        x: Math.random() * CANVAS_WIDTH,
+        y: Math.random() * CANVAS_HEIGHT
+      };
+    }
+
+    function updateAIAgent(ai, i, now) {
+      if (ai.role === 'human') return;
+
+      // If waiting, check if done
+      if (ai.aiState === 'waiting') {
+        if (now >= ai.waitUntil) {
+          ai.aiState = 'idle';
+        }
+        return;
+      }
+
+      // If moving, attempt to move
+      if (ai.aiState === 'moving') {
+        const arrived = moveAI(ai);
+        if (!arrived) {
+          // fighter tries to kill if in range
+          if (ai.role === 'fighter') {
+            tryKillEnemyByAI(ai);
+          }
+          return;
+        }
+        // On arrival:
+        if (ai.role === 'fighter') {
+          // kill once
+          tryKillEnemyByAI(ai);
+          setWaiting(ai, now);
+
+        } else if (ai.role === 'eater') {
+          eatApple(i);
+          setWaiting(ai, now);
+
+        } else if (ai.role === 'builder') {
+          placeBrick(i);
+          setWaiting(ai, now);
+        }
+        return;
+      }
+
+      // If idle, pick a new target
+      if (ai.aiState === 'idle') {
+        if (ai.role === 'fighter') {
+          const nearest = findNearestEnemy(ai);
+          if (nearest) {
+            setMoving(ai, nearest.x, nearest.y);
+          } else {
+            // no enemies => wait a bit
+            setWaiting(ai, now, 3000);
+          }
+        } else if (ai.role === 'eater') {
+          const pos = randomPositionInSafeZone();
+          setMoving(ai, pos.x, pos.y);
+        } else if (ai.role === 'builder') {
+          const pos = randomPositionInMap();
+          setMoving(ai, pos.x, pos.y);
+        }
+      }
+    }
+
+    // Each frame, update AI
+    function updateAI(now) {
+      for (let i = 1; i < allPlayers.length; i++) {
+        updateAIAgent(allPlayers[i], i, now);
+      }
+    }
+
+    /*************************************/
+    /**        MARKET BALANCING        **/
+    /*************************************/
+    // 3) "Whenever there is an excess of demand in the market,
+    //    have the ai players add a supplier to balance it,
+    //    with a 5s cooldown."
+
+    function handleMarketBalance(now) {
+      if (now < lastMarketBalanceCheck + MARKET_BALANCE_COOLDOWN) {
+        return; // not time yet
+      }
+      lastMarketBalanceCheck = now;
+
+      // If there's an excess of demand, each AI adds a supplier
+      if (demands.length > supplies.length) {
+        // We'll pick a random existing demand for each AI
+        // (or you can pick the first or a random subset)
+        if (demands.length > 0) {
+          allPlayers.forEach((p, i) => {
+            if (i === 0) return; // skip human
+            // choose random demand
+            const d = demands[Math.floor(Math.random() * demands.length)];
+            addSupplier(d.good, d.price, i);
+          });
+        }
+      }
+    }
+
+    /*************************************/
+    /**         PLAYER CONTROLS        **/
+    /*************************************/
+    function updateHumanPlayer() {
+      const p = getHumanPlayer();
+      if (keys.ArrowUp) p.y -= PLAYER_SPEED;
+      if (keys.ArrowDown) p.y += PLAYER_SPEED;
+      if (keys.ArrowLeft) p.x -= PLAYER_SPEED;
+      if (keys.ArrowRight) p.x += PLAYER_SPEED;
+
+      // clamp
+      p.x = Math.max(0, Math.min(CANVAS_WIDTH - p.width, p.x));
+      p.y = Math.max(0, Math.min(CANVAS_HEIGHT - p.height, p.y));
+    }
+
+    function updatePlayerHunger() {
+      allPlayers.forEach((p) => {
+        p.hunger = Math.max(0, p.hunger - HUNGER_DECAY);
+      });
+    }
+
+    function updateSafeZone() {
+      const p = getHumanPlayer();
+      const dx = p.x - CANVAS_WIDTH / 2;
+      const dy = p.y - CANVAS_HEIGHT / 2;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      isPlayerInSafeZone = dist <= SAFE_ZONE_RADIUS;
+    }
+
+    /*************************************/
+    /**    ACTION ANIMATION + SOUND    **/
+    /*************************************/
+    function playActionAnimationAndSound(p) {
+      console.log(`Player ${p.role} did an action! (Play sound here)`);
+    }
+
+    /*************************************/
+    /**           RENDER LOGIC         **/
+    /*************************************/
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+
+    // Draw a circle for agents
+    function drawAgentAsCircle(x, y, diameter, color) {
+      const radius = diameter / 2;
+      ctx.beginPath();
+      ctx.arc(x + radius, y + radius, radius, 0, 2 * Math.PI);
+      ctx.fillStyle = color;
+      ctx.fill();
+    }
+
+    // Draw a triangle for demands
+    function drawTriangle(x, y, size, color) {
+      ctx.beginPath();
+      // Downward-pointing triangle
+      ctx.moveTo(x, y - size);
+      ctx.lineTo(x - size, y + size);
+      ctx.lineTo(x + size, y + size);
+      ctx.closePath();
+      ctx.fillStyle = color;
+      ctx.fill();
+    }
+
+    // Draw a square for supplies
+    function drawSquare(x, y, halfSize, color) {
+      ctx.fillStyle = color;
+      ctx.fillRect(x - halfSize, y - halfSize, halfSize * 2, halfSize * 2);
+    }
+
+    function draw() {
+      ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+
+      // Safezone
+      ctx.beginPath();
+      ctx.arc(CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2, SAFE_ZONE_RADIUS, 0, 2 * Math.PI);
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.1)';
+      ctx.fill();
+
+      // Collectables
+      collectables.forEach((c) => {
+        ctx.fillStyle = c.color;
+        ctx.fillRect(c.x, c.y, c.width, c.height);
+      });
+
+      // Bricks
+      bricks.forEach((b) => {
+        ctx.fillStyle = b.color;
+        ctx.fillRect(b.x, b.y, b.width, b.height);
+      });
+
+      // Enemies
+      enemies.forEach((enemy) => {
+        drawAgentAsCircle(enemy.x, enemy.y, enemy.width, enemy.color);
+      });
+
+      // Players (draw circles + money text)
+      allPlayers.forEach((p) => {
+        drawAgentAsCircle(p.x, p.y, p.width, p.color);
+
+        // 1) Display the money each player has over their heads
+        const radius = p.width / 2;
+        ctx.fillStyle = 'white';
+        ctx.font = '14px sans-serif';
+        // Position the text above the player's circle
+        ctx.fillText(`$${p.money.toFixed(2)}`, p.x + radius, p.y - 5);
+      });
+
+      // Demands (triangles)
+      demands.forEach((d) => {
+        const ownerColor = allPlayers[d.ownerIndex]?.color || 'orange';
+        drawTriangle(d.x, d.y, 12, ownerColor);
+        ctx.fillStyle = 'black';
+        ctx.font = '12px sans-serif';
+        ctx.fillText(d.good, d.x - 10, d.y + 4);
+      });
+
+      // Supplies (squares)
+      supplies.forEach((s) => {
+        const ownerColor = allPlayers[s.ownerIndex]?.color || 'green';
+        drawSquare(s.x, s.y, 12, ownerColor);
+        ctx.fillStyle = 'black';
+        ctx.font = '12px sans-serif';
+        ctx.fillText(s.good, s.x - 10, s.y + 4);
+      });
+    }
+
+    function updateHUD() {
+      const p = getHumanPlayer();
+      document.getElementById('hungerValue').textContent = p.hunger.toFixed(2);
+      document.getElementById('moneyValue').textContent = p.money.toFixed(2);
+    }
+
+    /*************************************/
+    /**         MAIN GAME LOOP         **/
+    /*************************************/
+    let lastTime = performance.now();
+
+    function gameLoop(now) {
+      let dt = now - lastTime;
+      lastTime = now;
+
+      // Basic updates
+      updateSafeZone();
+      updateHumanPlayer();
+      updateAI(now);
+      updateEnemies(now);
+      updateCollectables();
+      updatePlayerHunger();
+
+      // Market balancing
+      handleMarketBalance(now);
+
+      // Render + HUD
+      draw();
+      updateHUD();
+
+      requestAnimationFrame(gameLoop);
+    }
+
+    // Start the loop
+    requestAnimationFrame(gameLoop);
+
+    // Spawn timers
+    setInterval(spawnEnemy, 3000);
+    setInterval(spawnCollectable, 4000);
+
+    /*************************************/
+    /**      INPUT EVENT LISTENERS      **/
+    /*************************************/
+    document.addEventListener('keydown', (e) => {
+      const humanIndex = 0;
+      if (e.key === 'ArrowUp') keys.ArrowUp = true;
+      if (e.key === 'ArrowDown') keys.ArrowDown = true;
+      if (e.key === 'ArrowLeft') keys.ArrowLeft = true;
+      if (e.key === 'ArrowRight') keys.ArrowRight = true;
+
+      // Q => Attack (kill enemy if close)
+      if (e.key.toLowerCase() === 'q') {
+        tryKillNearbyEnemy();
+        playActionAnimationAndSound(allPlayers[humanIndex]);
+      }
+      // W => Place brick
+      if (e.key.toLowerCase() === 'w') {
+        placeBrick(humanIndex);
+        playActionAnimationAndSound(allPlayers[humanIndex]);
+      }
+      // E => Eat apple
+      if (e.key.toLowerCase() === 'e') {
+        eatApple(humanIndex);
+        playActionAnimationAndSound(allPlayers[humanIndex]);
+      }
+      // R => Add supplier to closest demand
+      if (e.key.toLowerCase() === 'r') {
+        addSupplierToClosestDemand(humanIndex);
+        playActionAnimationAndSound(allPlayers[humanIndex]);
+      }
+      // T => Make deals
+      if (e.key.toLowerCase() === 't') {
+        makeDeals();
+        playActionAnimationAndSound(allPlayers[humanIndex]);
+      }
+    });
+
+    document.addEventListener('keyup', (e) => {
+      if (e.key === 'ArrowUp') keys.ArrowUp = false;
+      if (e.key === 'ArrowDown') keys.ArrowDown = false;
+      if (e.key === 'ArrowLeft') keys.ArrowLeft = false;
+      if (e.key === 'ArrowRight') keys.ArrowRight = false;
+    });
+  </script>
+</body>
+</html>

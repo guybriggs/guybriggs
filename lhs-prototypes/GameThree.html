@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Townscaper-Inspired Patch Demo</title>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: #303030;
+    }
+    canvas {
+      display: block;
+      margin: 0 auto;
+      background: #eee;
+      border: 1px solid #aaa;
+    }
+  </style>
+</head>
+<body>
+
+<canvas id="canvas" width="800" height="600"></canvas>
+
+<script>
+/* 
+  -----------------------------------------------------------------------------
+    1) GENERATE A HEX OF TRIANGLES
+  -----------------------------------------------------------------------------
+  We'll create a hex of side length "hexSide" made of small equilateral triangles.
+  For convenience, we store each triangle as an object with vertices [p1, p2, p3],
+  where each p is {x, y}.
+*/
+
+const hexSide = 4;    // how many small triangles on each edge of the large hex
+const triSize = 30;   // side length of each small triangle in pixels
+const randomPairChance = 0.5; // probability of merging two adjacent triangles
+const relaxIterations = 2;    // how many times we relax the final mesh
+
+let triangles = [];       // array of {p1, p2, p3}
+let polygons = [];        // after pairing, each polygon has an array of points
+
+function generateHexTriangles() {
+  // This function generates equilateral triangles in a hex region.
+
+  // For each "row" of small triangles, we figure out how many triangles fit
+  // in that row, plus the x-offset. We'll store them as "upright" or "down" triangles.
+  // Then we clip them so they form a large hex shape.
+
+  const sqrt3 = Math.sqrt(3);
+
+  // We'll figure out how many rows we need. For side=4, the hex will have 2*hexSide-1=7 rows.
+  // (This is a standard formula for a "pointy" hex. We adapt for "flat" orientation if needed.)
+  let totalRows = 2 * hexSide - 1;
+
+  for (let row = 0; row < totalRows; row++) {
+    // figure out how many small triangles in this row
+    let rowIndexFromCenter = row - (hexSide - 1);
+    // distance from the "middle" row
+    let rowLen = hexSide * 2 - 1 - Math.abs(rowIndexFromCenter);
+
+    // Each row is offset horizontally. We'll center the hex on (0,0) eventually.
+    // The vertical spacing for an equilateral triangle with side=triSize is triSize * sqrt(3)/2
+    let y = row * (triSize * sqrt3 / 2);
+
+    // We'll figure out the "leftmost" column index. 
+    // The hex is centered horizontally, so let's offset by half the rowLen.
+    let xOffset = -(rowLen - 1) * (triSize / 2);
+
+    for (let col = 0; col < rowLen; col++) {
+      // We'll create two small triangles (up and down) in each "diamond cell".
+      // That is, each diamond cell has coordinates (cx, cy).
+
+      let cx = xOffset + col * triSize;
+      let cy = y;
+
+      // The "upright" triangle
+      let p1 = { x: cx,             y: cy };
+      let p2 = { x: cx + triSize/2, y: cy + (triSize * sqrt3 / 2) };
+      let p3 = { x: cx - triSize/2, y: cy + (triSize * sqrt3 / 2) };
+
+      triangles.push({ p1, p2, p3 });
+
+      // The "upside-down" triangle 
+      // (shift upward by the height of one small triangle)
+      let p4 = { x: cx,             y: cy + triSize * sqrt3 };
+      // re-use p2, p3 for corners of that diamond cell
+      triangles.push({ p1: p2, p2: p4, p3: p3 });
+    }
+  }
+
+  // SHIFT everything so that the center is roughly at (0,0)
+  // The bounding box in y is from 0 to totalRows*(triSize*sqrt3/2).
+  // We'll just move it up so it’s centered on the canvas. 
+  // Similarly for x, we do a bounding box shift.
+  let minX = Infinity, maxX = -Infinity;
+  let minY = Infinity, maxY = -Infinity;
+  for (let t of triangles) {
+    for (let p of [t.p1, t.p2, t.p3]) {
+      minX = Math.min(minX, p.x);
+      maxX = Math.max(maxX, p.x);
+      minY = Math.min(minY, p.y);
+      maxY = Math.max(maxY, p.y);
+    }
+  }
+  let midX = (minX + maxX) / 2;
+  let midY = (minY + maxY) / 2;
+  for (let t of triangles) {
+    for (let p of [t.p1, t.p2, t.p3]) {
+      p.x -= midX; 
+      p.y -= midY; 
+    }
+  }
+}
+
+
+/*
+  -----------------------------------------------------------------------------
+    2) RANDOMLY PAIR (MERGE) TRIANGLES INTO BIGGER POLYGONS
+  -----------------------------------------------------------------------------
+  We'll detect triangles that share an edge, and with some probability, merge them 
+  into a single polygon (usually a quad). For simplicity, once two triangles merge,
+  we won't merge that polygon again in this demo. Real Townscaper-like logic can be
+  more sophisticated.
+*/
+
+function buildPolygonsFromPairs() {
+  // We start each triangle as its own polygon
+  let polyList = triangles.map(tri => [tri.p1, tri.p2, tri.p3]);
+
+  // We'll keep track of merges by scanning polygon edges for adjacency
+  let merged = new Set(); // polygons we've already merged
+
+  // A small function to see if two polygons share an edge of length exactly 2 matching points
+  function shareEdge(polyA, polyB) {
+    // edges must have 2 identical vertices in the same order
+    // Actually, for a robust approach you'd handle permutations. Let's do a simple approach:
+    let sharedCount = 0;
+    let sharedPoints = [];
+    for (let p1 of polyA) {
+      for (let p2 of polyB) {
+        if (p1.x === p2.x && p1.y === p2.y) {
+          sharedCount++;
+          sharedPoints.push(p1);
+        }
+      }
+    }
+    return { sharedCount, sharedPoints };
+  }
+
+  // Attempt merges
+  for (let i = 0; i < polyList.length; i++) {
+    for (let j = i+1; j < polyList.length; j++) {
+      if (merged.has(i) || merged.has(j)) continue; 
+      let A = polyList[i], B = polyList[j];
+      let { sharedCount, sharedPoints } = shareEdge(A, B);
+      if (sharedCount === 2) {
+        // There's a shared edge. Let's see if we do the random pairing
+        if (Math.random() < randomPairChance) {
+          // Merge them
+          merged.add(i);
+          merged.add(j);
+          // The merged polygon is basically all the points of A plus B minus duplicates
+          // but let's do a simple approach: unify, then remove duplicates
+          let combined = A.concat(B);
+
+          // remove duplicates
+          let unique = [];
+          for (let cP of combined) {
+            if (!unique.find(u => u.x === cP.x && u.y === cP.y)) {
+              unique.push(cP);
+            }
+          }
+          polygons.push(unique);
+        }
+      }
+    }
+  }
+
+  // Any polygons not merged remain as-is
+  for (let i = 0; i < polyList.length; i++) {
+    if (!merged.has(i)) {
+      polygons.push(polyList[i]);
+    }
+  }
+}
+
+
+/*
+  -----------------------------------------------------------------------------
+    3) (OPTIONAL) RELAX THE MESH
+  -----------------------------------------------------------------------------
+  We'll do a simple "average neighbor positions" approach. Real Townscaper 
+  might use a more sophisticated relaxation. We'll do it polygon by polygon:
+   - For each vertex, gather the positions of adjacent vertices (those that share 
+     the same polygon edge).
+   - Then move the vertex to the average of those + itself. (This is one iteration.)
+*/
+
+function relaxPolygons(iterations) {
+  for (let iter = 0; iter < iterations; iter++) {
+    // We'll gather new positions for each vertex in a map
+    let newPositions = new Map();
+
+    // Build adjacency: which points are neighbors of which point?
+    // We'll store adjacency in an object keyed by "x,y" => set of neighbors
+    let adjacency = {};
+    function pointKey(p) { return `${p.x},${p.y}`; }
+
+    for (let poly of polygons) {
+      let n = poly.length;
+      for (let i = 0; i < n; i++) {
+        let pA = poly[i];
+        let pB = poly[(i+1) % n];
+        let keyA = pointKey(pA);
+        let keyB = pointKey(pB);
+        adjacency[keyA] = adjacency[keyA] || new Set();
+        adjacency[keyB] = adjacency[keyB] || new Set();
+        adjacency[keyA].add(keyB);
+        adjacency[keyB].add(keyA);
+      }
+    }
+
+    // For each point in adjacency, compute average position of neighbors + itself
+    for (let key in adjacency) {
+      // parse out x,y
+      let [sx, sy] = key.split(',').map(Number);
+      let nbrs = adjacency[key];
+      let sumX = sx, sumY = sy;
+      let count = 1; // itself
+      for (let nbrKey of nbrs) {
+        let [nx, ny] = nbrKey.split(',').map(Number);
+        sumX += nx;
+        sumY += ny;
+        count++;
+      }
+      let avgX = sumX / count;
+      let avgY = sumY / count;
+      newPositions.set(key, { x: avgX, y: avgY });
+    }
+
+    // Apply new positions to polygons
+    for (let poly of polygons) {
+      for (let i = 0; i < poly.length; i++) {
+        let p = poly[i];
+        let key = pointKey(p);
+        let np = newPositions.get(key);
+        if (np) {
+          poly[i] = { x: np.x, y: np.y };
+        }
+      }
+    }
+  }
+}
+
+
+/*
+  -----------------------------------------------------------------------------
+    4) DRAW THE FINAL PATCH
+  -----------------------------------------------------------------------------
+  We'll draw polygons on the canvas so you can see the resulting "flowing" shape.
+*/
+
+function drawPolygons(ctx) {
+  // Let's color them in a subtle range.
+  polygons.forEach(poly => {
+    ctx.beginPath();
+    ctx.moveTo(poly[0].x, poly[0].y);
+    for (let i = 1; i < poly.length; i++) {
+      ctx.lineTo(poly[i].x, poly[i].y);
+    }
+    ctx.closePath();
+    
+    // Fill
+    ctx.fillStyle = '#ddeeff';
+    ctx.fill();
+    
+    // Stroke
+    ctx.strokeStyle = '#444';
+    ctx.stroke();
+  });
+}
+
+
+// --------------------------------------------------------------------------
+//  MAIN
+// --------------------------------------------------------------------------
+function main() {
+  const canvas = document.getElementById('canvas');
+  const ctx = canvas.getContext('2d');
+
+  // 1) Generate a hex of small triangles
+  generateHexTriangles();
+
+  // 2) Randomly pair triangles into polygons
+  buildPolygonsFromPairs();
+
+  // 3) (Optional) Relax polygons to make them more "organic"
+  relaxPolygons(relaxIterations);
+
+  // Move the polygons so they appear in the center of the canvas
+  ctx.translate(canvas.width / 2, canvas.height / 2);
+
+  // 4) Draw the polygons
+  drawPolygons(ctx);
+}
+
+// Run!
+main();
+</script>
+
+</body>
+</html>

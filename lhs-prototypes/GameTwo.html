@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Messy Grid Game</title>
+  <style>
+    body {
+      margin: 0;
+      overflow: hidden; /* so the page doesn't scroll with arrow keys */
+    }
+    #gameCanvas {
+      display: block;
+      background: #ccddee;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="gameCanvas" width="800" height="600"></canvas>
+
+  <script>
+    // ----------------------------
+    // CONFIG
+    // ----------------------------
+    const CELL_SIZE = 50;      // base cell width/height
+    const GRID_ROWS = 20;
+    const GRID_COLS = 20;
+    const OFFSET_RANGE = 10;   // max random offset (±) for each vertex
+    const MOVE_SPEED = 5;      // player movement speed in pixels per step
+
+    // ----------------------------
+    // GLOBALS
+    // ----------------------------
+    const canvas = document.getElementById("gameCanvas");
+    const ctx = canvas.getContext("2d");
+
+    let canvasWidth = canvas.width;
+    let canvasHeight = canvas.height;
+
+    // Store random offsets for each grid intersection
+    let gridOffsets = [];
+
+    // A list of blocks (each has row & col)
+    let blocks = [];
+
+    // Player (or camera) position in world coordinates
+    let player = {
+      x: canvasWidth / 2,
+      y: canvasHeight / 2
+    };
+
+    // Track which keys are currently pressed
+    let keys = {};
+
+    // ----------------------------
+    // INITIALIZE
+    // ----------------------------
+
+    // 1) Generate the "messy" grid offsets
+    function generateMessyGrid() {
+      // We need (GRID_ROWS + 1) x (GRID_COLS + 1) offsets
+      for (let row = 0; row <= GRID_ROWS; row++) {
+        let rowOffsets = [];
+        for (let col = 0; col <= GRID_COLS; col++) {
+          let dx = (Math.random() - 0.5) * 2 * OFFSET_RANGE;
+          let dy = (Math.random() - 0.5) * 2 * OFFSET_RANGE;
+          rowOffsets.push({ dx, dy });
+        }
+        gridOffsets.push(rowOffsets);
+      }
+    }
+    generateMessyGrid();
+
+    // 2) Keyboard event listeners
+    document.addEventListener("keydown", (e) => {
+      keys[e.key] = true;
+    });
+    document.addEventListener("keyup", (e) => {
+      keys[e.key] = false;
+    });
+
+    // (Optional) Handle window resize
+    // If you want it fully responsive, uncomment the lines below:
+    /*
+    window.addEventListener("resize", () => {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+      canvasWidth = canvas.width;
+      canvasHeight = canvas.height;
+    });
+    */
+
+    // ----------------------------
+    // GAME LOOP
+    // ----------------------------
+    function gameLoop() {
+      update();
+      draw();
+      requestAnimationFrame(gameLoop);
+    }
+
+    function update() {
+      // Move player
+      if (keys["ArrowUp"]) {
+        player.y -= MOVE_SPEED;
+      }
+      if (keys["ArrowDown"]) {
+        player.y += MOVE_SPEED;
+      }
+      if (keys["ArrowLeft"]) {
+        player.x -= MOVE_SPEED;
+      }
+      if (keys["ArrowRight"]) {
+        player.x += MOVE_SPEED;
+      }
+
+      // Place block when E is pressed
+      if (keys["e"] || keys["E"]) {
+        let cellCol = Math.floor(player.x / CELL_SIZE);
+        let cellRow = Math.floor(player.y / CELL_SIZE);
+
+        // Check if there's already a block in that cell
+        const existingBlock = blocks.find(
+          (b) => b.row === cellRow && b.col === cellCol
+        );
+        if (!existingBlock) {
+          blocks.push({ row: cellRow, col: cellCol });
+        }
+
+        // Prevent placing multiple blocks if E is held down
+        delete keys["e"];
+        delete keys["E"];
+      }
+    }
+
+    function draw() {
+      // Clear the canvas
+      ctx.clearRect(0, 0, canvasWidth, canvasHeight);
+
+      // Save context and shift it so the player remains centered
+      ctx.save();
+      ctx.translate(
+        canvasWidth / 2 - player.x,
+        canvasHeight / 2 - player.y
+      );
+
+      drawMessyGrid();
+      drawBlocks();
+      drawPlayer();
+
+      ctx.restore();
+    }
+
+    // ----------------------------
+    // DRAWING FUNCTIONS
+    // ----------------------------
+
+    // Draw the entire messy grid
+    function drawMessyGrid() {
+      ctx.strokeStyle = "#666";
+      ctx.lineWidth = 1;
+
+      for (let row = 0; row < GRID_ROWS; row++) {
+        for (let col = 0; col < GRID_COLS; col++) {
+          // Four corners from the gridOffsets array
+          let topLeft     = gridOffsets[row][col];
+          let bottomLeft  = gridOffsets[row + 1][col];
+          let bottomRight = gridOffsets[row + 1][col + 1];
+          let topRight    = gridOffsets[row][col + 1];
+
+          // Base top-left in a regular (non-skewed) grid
+          let baseX = col * CELL_SIZE;
+          let baseY = row * CELL_SIZE;
+
+          // Actual corner positions
+          let xTL = baseX + topLeft.dx;
+          let yTL = baseY + topLeft.dy;
+
+          let xBL = baseX + bottomLeft.dx;
+          let yBL = baseY + CELL_SIZE + bottomLeft.dy;
+
+          let xBR = baseX + CELL_SIZE + bottomRight.dx;
+          let yBR = baseY + CELL_SIZE + bottomRight.dy;
+
+          let xTR = baseX + CELL_SIZE + topRight.dx;
+          let yTR = baseY + topRight.dy;
+
+          // Draw the cell polygon
+          ctx.beginPath();
+          ctx.moveTo(xTL, yTL);
+          ctx.lineTo(xBL, yBL);
+          ctx.lineTo(xBR, yBR);
+          ctx.lineTo(xTR, yTR);
+          ctx.closePath();
+
+          // Fill & outline
+          ctx.fillStyle = "#eeeeff";
+          ctx.fill();
+          ctx.stroke();
+        }
+      }
+    }
+
+    // Draw any placed blocks
+    function drawBlocks() {
+      ctx.fillStyle = "rgba(255, 165, 0, 0.8)"; // orange with some alpha
+      blocks.forEach((block) => {
+        // Convert cell coords back to world coords
+        let baseX = block.col * CELL_SIZE;
+        let baseY = block.row * CELL_SIZE;
+
+        // We'll draw a smaller rectangle in the center of the cell
+        let blockWidth = CELL_SIZE * 0.8;
+        let blockHeight = CELL_SIZE * 0.8;
+        let offsetX = (CELL_SIZE - blockWidth) / 2;
+        let offsetY = (CELL_SIZE - blockHeight) / 2;
+
+        ctx.fillRect(baseX + offsetX, baseY + offsetY, blockWidth, blockHeight);
+      });
+    }
+
+    // Draw the player
+    function drawPlayer() {
+      ctx.fillStyle = "blue";
+      ctx.beginPath();
+      ctx.arc(player.x, player.y, 10, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // ----------------------------
+    // START
+    // ----------------------------
+    gameLoop();
+  </script>
+</body>
+</html>

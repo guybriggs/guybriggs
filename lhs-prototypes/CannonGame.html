@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>JS Cannon Game with Camera Zoom Out In Air</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      background: #333;
+      color: #fff;
+      overflow: hidden;
+    }
+    canvas {
+      display: block;
+      background: #111;
+    }
+  </style>
+</head>
+<body>
+<canvas id="gameCanvas" width="800" height="600"></canvas>
+<script>
+/**
+ * SETTINGS
+ */
+
+// Define two scale factors:
+//   1) Normal (when standing on a patch)
+//   2) In-Air (when catapulted)
+const NORMAL_SCALE_FACTOR = 3;   // Zoom in
+const IN_AIR_SCALE_FACTOR = 2;   // Zoom out a bit while flying
+
+const CANVAS_WIDTH  = 800;
+const CANVAS_HEIGHT = 600;
+
+// Player movement
+const PLAYER_SPEED = 2;
+const CATAPULT_SPEED = 10;
+const GRAVITY = 0.5;
+const ARC_JUMP_FRAMES = 30;
+
+// Terrain/patch settings
+const NUM_PATCHES = 8;
+const PATCH_RADIUS = 80;
+const HOUSE_MIN = 1;
+const HOUSE_MAX = 6;
+const CANNONS_PER_PATCH = 3;
+const PATCH_TYPES = ["Grass", "Beach", "Lake", "Forest"];
+
+/**
+ * GLOBALS
+ */
+let canvas, ctx;
+let keysPressed = {};
+let gamePatches = [];
+let currentPatchIndex = 0;
+
+// We'll track whether E was pressed on the previous frame
+let prevEPressed = false;
+
+// Current scale factor for the camera (dynamic)
+let currentScaleFactor = NORMAL_SCALE_FACTOR;
+
+/**
+ * Player object
+ */
+const player = {
+  x: 0,
+  y: 0,
+  vx: 0,
+  vy: 0,
+  isCatapulted: false,
+  catapultFramesLeft: 0
+};
+
+/**
+ * Camera object
+ */
+const camera = {
+  x: 0,
+  y: 0
+};
+
+/**
+ * Patch and other object structures
+ */
+function createPatch(x, y) {
+  return {
+    x,
+    y,
+    type: PATCH_TYPES[Math.floor(Math.random() * PATCH_TYPES.length)],
+    cannons: [],
+    houses: []
+  };
+}
+
+function createHouse(offsetX, offsetY) {
+  return { x: offsetX, y: offsetY };
+}
+
+/**
+ * Create a cannon
+ */
+function createCannon(offsetX, offsetY, angle) {
+  return { offsetX, offsetY, angle };
+}
+
+/**
+ * SETUP
+ */
+window.onload = () => {
+  canvas = document.getElementById("gameCanvas");
+  ctx = canvas.getContext("2d");
+
+  // Key listeners
+  window.addEventListener("keydown", (e) => {
+    keysPressed[e.key.toLowerCase()] = true;
+  });
+  window.addEventListener("keyup", (e) => {
+    keysPressed[e.key.toLowerCase()] = false;
+  });
+
+  // Generate patches
+  generateGamePatches();
+
+  // Start player in the center of the first patch
+  const firstPatch = gamePatches[0];
+  player.x = firstPatch.x;
+  player.y = firstPatch.y;
+
+  // Main loop
+  requestAnimationFrame(gameLoop);
+};
+
+/**
+ * Generate patches randomly
+ */
+function generateGamePatches() {
+  for (let i = 0; i < NUM_PATCHES; i++) {
+    // Random location
+    const x = Math.random() * (CANVAS_WIDTH - 200) + 100;
+    const y = Math.random() * (CANVAS_HEIGHT - 200) + 100;
+    const patch = createPatch(x, y);
+
+    // Houses
+    const houseCount = Math.floor(Math.random() * (HOUSE_MAX - HOUSE_MIN + 1)) + HOUSE_MIN;
+    for (let h = 0; h < houseCount; h++) {
+      const angle = Math.random() * 2 * Math.PI;
+      const r = PATCH_RADIUS * 0.5 * Math.random();
+      patch.houses.push(createHouse(r * Math.cos(angle), r * Math.sin(angle)));
+    }
+
+    // Cannons
+    for (let c = 0; c < CANNONS_PER_PATCH; c++) {
+      const offsetAngle = Math.random() * 2 * Math.PI;
+      const offsetDist = 15 + Math.random() * 25; 
+      const offsetX = offsetDist * Math.cos(offsetAngle);
+      const offsetY = offsetDist * Math.sin(offsetAngle);
+
+      const cannonAngle = Math.random() * 2 * Math.PI;
+      patch.cannons.push(createCannon(offsetX, offsetY, cannonAngle));
+    }
+
+    gamePatches.push(patch);
+  }
+}
+
+/**
+ * MAIN GAME LOOP
+ */
+function gameLoop() {
+  update();
+  draw();
+  requestAnimationFrame(gameLoop);
+}
+
+/**
+ * UPDATE
+ */
+function update() {
+  if (!player.isCatapulted) {
+    // Normal walking
+    if (keysPressed["w"] || keysPressed["arrowup"])    player.y -= PLAYER_SPEED;
+    if (keysPressed["s"] || keysPressed["arrowdown"])  player.y += PLAYER_SPEED;
+    if (keysPressed["a"] || keysPressed["arrowleft"])  player.x -= PLAYER_SPEED;
+    if (keysPressed["d"] || keysPressed["arrowright"]) player.x += PLAYER_SPEED;
+
+    // Check if "E" was just pressed this frame
+    const ePressedNow = !!keysPressed["e"];
+    const justPressedE = ePressedNow && !prevEPressed;
+    if (justPressedE) {
+      tryCatapult();
+    }
+    prevEPressed = ePressedNow;
+
+    // Make sure camera is in normal zoom if you're on the ground
+    currentScaleFactor = NORMAL_SCALE_FACTOR;
+
+  } else {
+    // Catapult arc
+    player.x += player.vx;
+    player.y += player.vy;
+    player.vy += GRAVITY;
+
+    player.catapultFramesLeft--;
+    if (player.catapultFramesLeft <= 0) {
+      // End catapult
+      player.isCatapulted = false;
+      landOnNearestPatch();
+    }
+
+    // While in air, switch to the "in air" scale factor (zoom out)
+    currentScaleFactor = IN_AIR_SCALE_FACTOR;
+  }
+
+  updateCamera();
+}
+
+/**
+ * If player is within range of a cannon, start catapult.
+ */
+function tryCatapult() {
+  const patch = gamePatches[currentPatchIndex];
+  const CANNON_INTERACT_RANGE = 25; 
+
+  for (let cannon of patch.cannons) {
+    const cannonWorldX = patch.x + cannon.offsetX;
+    const cannonWorldY = patch.y + cannon.offsetY;
+
+    const dx = player.x - cannonWorldX;
+    const dy = player.y - cannonWorldY;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+
+    if (dist < CANNON_INTERACT_RANGE) {
+      startCatapult(cannon.angle);
+      return;
+    }
+  }
+}
+
+/**
+ * Start catapult movement
+ */
+function startCatapult(angle) {
+  player.isCatapulted = true;
+  player.catapultFramesLeft = ARC_JUMP_FRAMES;
+
+  player.vx = CATAPULT_SPEED * Math.cos(angle);
+  // negative sin(angle) so “up” is visually up on the canvas
+  player.vy = -CATAPULT_SPEED * Math.sin(angle);
+}
+
+/**
+ * Once catapult finishes, snap to nearest patch center
+ */
+function landOnNearestPatch() {
+  let nearestIndex = 0;
+  let nearestDistance = Infinity;
+  for (let i = 0; i < gamePatches.length; i++) {
+    const px = gamePatches[i].x;
+    const py = gamePatches[i].y;
+    const dist = (player.x - px)*(player.x - px) + (player.y - py)*(player.y - py);
+    if (dist < nearestDistance) {
+      nearestDistance = dist;
+      nearestIndex = i;
+    }
+  }
+  currentPatchIndex = nearestIndex;
+  player.x = gamePatches[nearestIndex].x;
+  player.y = gamePatches[nearestIndex].y;
+}
+
+/**
+ * Update camera so that the player is centered.
+ */
+function updateCamera() {
+  camera.x = player.x - (CANVAS_WIDTH  / 2) / currentScaleFactor;
+  camera.y = player.y - (CANVAS_HEIGHT / 2) / currentScaleFactor;
+}
+
+/**
+ * DRAW
+ */
+function draw() {
+  ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+
+  ctx.save();
+  // Apply dynamic scale factor
+  ctx.scale(currentScaleFactor, currentScaleFactor);
+  // Translate so that (camera.x, camera.y) is the top-left corner
+  ctx.translate(-camera.x, -camera.y);
+
+  for (let patch of gamePatches) {
+    drawPatch(patch);
+  }
+
+  drawPlayer();
+  ctx.restore();
+}
+
+/**
+ * Draw patch
+ */
+function drawPatch(patch) {
+  // Patch circle
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(patch.x, patch.y, PATCH_RADIUS, 0, Math.PI * 2);
+  let color = "#228B22";
+  if (patch.type === "Beach") color = "#FFD700";
+  if (patch.type === "Lake")  color = "#1E90FF";
+  if (patch.type === "Forest") color = "#006400";
+  ctx.fillStyle = color;
+  ctx.fill();
+  ctx.closePath();
+  ctx.restore();
+
+  // Houses
+  for (let house of patch.houses) {
+    drawHouse(patch.x + house.x, patch.y + house.y);
+  }
+
+  // Cannons
+  for (let cannon of patch.cannons) {
+    drawCannon(
+      patch.x + cannon.offsetX, 
+      patch.y + cannon.offsetY, 
+      cannon.angle
+    );
+  }
+}
+
+/**
+ * Draw a house
+ */
+function drawHouse(x, y) {
+  ctx.save();
+  ctx.fillStyle = "#ccc";
+  ctx.fillRect(x - 5, y - 5, 10, 10);
+  ctx.restore();
+}
+
+/**
+ * Draw a cannon
+ */
+function drawCannon(cx, cy, angle) {
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(-angle);
+
+  // barrel
+  ctx.strokeStyle = "#111";
+  ctx.lineWidth = 4;
+  ctx.beginPath();
+  ctx.moveTo(0, 0);
+  ctx.lineTo(20, 0);
+  ctx.stroke();
+
+  // arrowhead
+  ctx.beginPath();
+  ctx.moveTo(20, 0);
+  ctx.lineTo(15, -4);
+  ctx.lineTo(15,  4);
+  ctx.closePath();
+  ctx.fillStyle = "#111";
+  ctx.fill();
+
+  ctx.restore();
+}
+
+/**
+ * Draw the player (circle)
+ */
+function drawPlayer() {
+  ctx.save();
+  ctx.fillStyle = "white";
+  ctx.beginPath();
+  ctx.arc(player.x, player.y, 8, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+</script>
+</body>
+</html>

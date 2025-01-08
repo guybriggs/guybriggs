@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Playconomics Prototype</title>
+  <style>
+    body {
+      font-family: sans-serif;
+      margin: 20px;
+    }
+    h1 {
+      margin-bottom: 10px;
+    }
+    .resource-box {
+      display: inline-block;
+      padding: 10px;
+      border: 1px solid #ccc;
+      margin-right: 20px;
+      margin-bottom: 20px;
+      text-align: center;
+      width: 120px;
+    }
+    .actions {
+      margin-bottom: 20px;
+    }
+    button {
+      margin-right: 10px;
+      margin-bottom: 10px;
+      padding: 8px;
+      cursor: pointer;
+    }
+    .logs {
+      max-height: 200px;
+      overflow-y: auto;
+      background: #f9f9f9;
+      padding: 10px;
+      border: 1px solid #ddd;
+    }
+  </style>
+</head>
+<body>
+
+<h1>Playconomics: Prototype</h1>
+
+<!-- Resource Display -->
+<div id="resources">
+  <div class="resource-box">
+    <strong>Land</strong>
+    <div id="landCount">0</div>
+  </div>
+  <div class="resource-box">
+    <strong>Labor</strong>
+    <div id="laborCount">0</div>
+  </div>
+  <div class="resource-box">
+    <strong>Capital</strong>
+    <div id="capitalCount">50</div>
+  </div>
+  <div class="resource-box">
+    <strong>Entrepreneurship</strong>
+    <div id="entrepreneurshipCount">0</div>
+  </div>
+  <div class="resource-box">
+    <strong>Goods Produced</strong>
+    <div id="goodsCount">0</div>
+  </div>
+</div>
+
+<!-- Action Buttons -->
+<div class="actions">
+  <button id="terraformBtn">Terraform Land (Cost: 5 Capital)</button>
+  <button id="inviteLaborBtn">Invite Labor (Cost: 2 Capital)</button>
+  <button id="investCapitalBtn">Invest in Capital (Cost: 5 Goods)</button>
+  <button id="startBusinessBtn">Start a Business (Cost: 1 Entrepreneur, 2 Land, 2 Labor, 5 Capital)</button>
+</div>
+
+<!-- Activity Log -->
+<div class="logs" id="log"></div>
+
+<script>
+  /***************************************
+   * GAME STATE
+   ***************************************/
+  const gameState = {
+    land: 0,
+    labor: 0,
+    capital: 50,
+    entrepreneurship: 0,
+    goods: 0,
+
+    // For demonstration, a few game settings:
+    productionRate: 1,       // How many goods we produce per "tick" given certain factors
+    nextEntrepreneurIn: 30,  // Seconds until the next entrepreneur spawns
+    timeElapsed: 0           // Keep track of total time for potential events
+  };
+
+  /***************************************
+   * HELPER FUNCTIONS
+   ***************************************/
+  function updateUI() {
+    document.getElementById("landCount").innerText = gameState.land;
+    document.getElementById("laborCount").innerText = gameState.labor;
+    document.getElementById("capitalCount").innerText = gameState.capital;
+    document.getElementById("entrepreneurshipCount").innerText = gameState.entrepreneurship;
+    document.getElementById("goodsCount").innerText = gameState.goods;
+  }
+
+  function logMessage(message) {
+    const logDiv = document.getElementById("log");
+    const timestamp = new Date().toLocaleTimeString();
+    logDiv.innerHTML = `[${timestamp}] ${message}<br>` + logDiv.innerHTML;
+  }
+
+  /***************************************
+   * ACTIONS (10-Second Loop)
+   ***************************************/
+  // Terraform Land
+  document.getElementById("terraformBtn").addEventListener("click", () => {
+    if (gameState.capital >= 5) {
+      gameState.capital -= 5;
+      gameState.land += 1;
+      logMessage("You terraformed 1 unit of land (-5 capital).");
+      updateUI();
+    } else {
+      logMessage("Not enough capital to terraform land!");
+    }
+  });
+
+  // Invite Labor
+  document.getElementById("inviteLaborBtn").addEventListener("click", () => {
+    if (gameState.capital >= 2) {
+      gameState.capital -= 2;
+      gameState.labor += 1;
+      logMessage("You invited 1 laborer (-2 capital).");
+      updateUI();
+    } else {
+      logMessage("Not enough capital to invite labor!");
+    }
+  });
+
+  // Invest in Capital
+  document.getElementById("investCapitalBtn").addEventListener("click", () => {
+    if (gameState.goods >= 5) {
+      gameState.goods -= 5;
+      gameState.capital += 2; 
+      logMessage("You invested in capital (-5 goods, +2 capital).");
+      updateUI();
+    } else {
+      logMessage("Not enough goods to invest in capital!");
+    }
+  });
+
+  // Start a Business
+  // (Requires 1 entrepreneur, 2 land, 2 labor, 5 capital)
+  document.getElementById("startBusinessBtn").addEventListener("click", () => {
+    if (gameState.entrepreneurship >= 1 &&
+        gameState.land >= 2 &&
+        gameState.labor >= 2 &&
+        gameState.capital >= 5) {
+
+      gameState.entrepreneurship -= 1;
+      gameState.land -= 2;
+      gameState.labor -= 2;
+      gameState.capital -= 5;
+
+      // Business effect: In this prototype, each business produces goods faster
+      // For simplicity, increment production rate
+      gameState.productionRate += 1;
+
+      logMessage("You started a new business! Production rate increased.");
+      updateUI();
+    } else {
+      logMessage("Not enough resources to start a business!");
+    }
+  });
+
+  /***************************************
+   * CORE GAME LOOP
+   * (Could be viewed as part of the 10-minute or even 10-hour loop
+   *  if expanded to manage society, policies, etc.)
+   ***************************************/
+  function gameLoop() {
+    // Each "tick" we produce goods based on Land, Labor, and productionRate.
+    // A simple formula (just an example): 
+    // goods += (labor * land * productionRate) / 100 each second
+    // Tweak this to model diminishing returns, etc.
+    const goodsProduced = (gameState.labor * gameState.land * gameState.productionRate) / 100;
+    gameState.goods += goodsProduced;
+
+    // Track time to potentially spawn new entrepreneurs
+    gameState.timeElapsed += 1;
+    gameState.nextEntrepreneurIn -= 1;
+    if (gameState.nextEntrepreneurIn <= 0) {
+      gameState.entrepreneurship += 1;
+      logMessage("A new entrepreneur has emerged in your economy!");
+      // Reset the timer (random interval or fixed; here, let’s set 45 seconds)
+      gameState.nextEntrepreneurIn = 45;
+    }
+
+    updateUI();
+  }
+
+  // Run the game loop every second
+  setInterval(gameLoop, 1000);
+
+  // Initial UI Update
+  updateUI();
+  logMessage("Welcome to the Playconomics prototype! Build your economy step by step.");
+</script>
+
+</body>
+</html>

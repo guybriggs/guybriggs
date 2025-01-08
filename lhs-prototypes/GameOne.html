@@ -1,0 +1,389 @@
+<!-- 
+  BRIEF GAME DESCRIPTION:
+  This prototype includes:
+  1. A player entity that can move around using the WASD keys.
+  2. A "camera" system that keeps the player centered on the canvas.
+  3. Large "blobby shapes" in the world, each representing different terrain types:
+     ocean, beach, grass, forest, and mountain.
+  4. The player starts in the center of the game world.
+  5. The player can create building blocks by pressing E.
+     - Blocks snap to a "Townscaper-like" staggered grid.
+       (Think of a brick layout: rows are offset horizontally in alternating fashion.)
+     - Each block has a slight trigonometric distortion in its corners, 
+       so edges appear slightly curved.
+     - This layout lets you build walls or enclaves that line up but still look organic.
+
+  Future expansions might include:
+  - More advanced building shapes (not just squares).
+  - Interplay with terrain (e.g., building near water).
+  - Persistent data saving/loading for larger worlds.
+-->
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Townscaper-like Staggered Grid</title>
+  <style>
+    /* Style the canvas to fill the screen */
+    html, body {
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+    }
+    #gameCanvas {
+      display: block;
+      background-color: #eee; /* Light gray background for visibility */
+    }
+  </style>
+</head>
+<body>
+  <canvas id="gameCanvas"></canvas>
+  <script>
+    /*********************************************************************
+     * GLOBAL CONFIG & INITIALIZATION
+     *********************************************************************/
+    
+    // Get reference to the canvas and its 2D rendering context
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    
+    // Resize canvas to fill the window
+    function resizeCanvas() {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+    }
+    window.addEventListener('resize', resizeCanvas);
+    resizeCanvas(); // Initial sizing
+
+    // Store all active or relevant keys (e.g., WASD, E)
+    const keys = {
+      w: false,
+      a: false,
+      s: false,
+      d: false,
+      e: false
+    };
+
+    // Listen for keydown/keyup events and update `keys` object
+    window.addEventListener('keydown', (e) => {
+      switch (e.key.toLowerCase()) {
+        case 'w':
+          keys.w = true;
+          break;
+        case 'a':
+          keys.a = true;
+          break;
+        case 's':
+          keys.s = true;
+          break;
+        case 'd':
+          keys.d = true;
+          break;
+        case 'e':
+          keys.e = true;
+          break;
+      }
+    });
+
+    window.addEventListener('keyup', (e) => {
+      switch (e.key.toLowerCase()) {
+        case 'w':
+          keys.w = false;
+          break;
+        case 'a':
+          keys.a = false;
+          break;
+        case 's':
+          keys.s = false;
+          break;
+        case 'd':
+          keys.d = false;
+          break;
+        case 'e':
+          keys.e = false;
+          break;
+      }
+    });
+
+    /*********************************************************************
+     * GAME ENTITIES & CAMERA
+     *********************************************************************/
+
+    // Example "world" size – imagine a large, scrollable area
+    const world = {
+      width: 2000,
+      height: 2000
+    };
+
+    /**
+     * Player object
+     * - We'll now center the player in the world on game start.
+     */
+    const player = {
+      x: world.width / 2,   // center horizontally
+      y: world.height / 2,  // center vertically
+      speed: 5
+    };
+
+    /**
+     * Camera object
+     */
+    const camera = {
+      x: 0,
+      y: 0
+    };
+
+    /**
+     * Terrain blobs
+     */
+    const terrainColors = ['blue', 'beige', 'lightgreen', 'darkgreen', 'grey'];
+
+    function generateBlobs(numBlobs) {
+      const blobs = [];
+      for (let i = 0; i < numBlobs; i++) {
+        const x = Math.random() * world.width;
+        const y = Math.random() * world.height;
+        const radius = 150 + Math.random() * 150;
+        const color = terrainColors[Math.floor(Math.random() * terrainColors.length)];
+        blobs.push({ x, y, radius, color });
+      }
+      return blobs;
+    }
+
+    const blobs = generateBlobs(30);
+
+    /*********************************************************************
+     * TOWNSCAPER-LIKE STAGGERED GRID SYSTEM
+     *
+     * We'll define a "brick/hex" style layout:
+     * - Each cell is of size cellWidth × cellHeight.
+     * - On even rows (rowIndex % 2 == 0), cells start at x=0, x=cellWidth, etc.
+     * - On odd rows, cells shift by half a cellWidth horizontally.
+     * 
+     * We'll define a function that, given a world position (wx, wy),
+     * finds the nearest cell in row/col coordinates, then converts back
+     * to the actual center in world space for building placement.
+     *********************************************************************/
+
+    const cellWidth = 40;   // Horizontal distance between column centers
+    const cellHeight = 40;  // Vertical distance between row centers
+
+    /**
+     * worldPosToStaggeredGrid
+     * Converts a world position to a row/col in our staggered system.
+     * Returns fractional row/col, which can be rounded to find the nearest cell.
+     */
+    function worldPosToStaggeredGrid(wx, wy) {
+      // First approximate row
+      const row = wy / cellHeight;
+
+      // On odd rows, x is offset by half a cell
+      // We can "undo" that offset to get the approximate column
+      const isOddRow = (Math.floor(row) % 2 !== 0);
+      let col;
+
+      if (isOddRow) {
+        col = (wx - cellWidth * 0.5) / cellWidth;
+      } else {
+        col = wx / cellWidth;
+      }
+
+      return { row, col };
+    }
+
+    /**
+     * snapToNearestStaggeredCell
+     * Given a world position, finds the integer row/col of the nearest cell,
+     * then returns the *world-space center* of that cell.
+     */
+    function snapToNearestStaggeredCell(wx, wy) {
+      const { row, col } = worldPosToStaggeredGrid(wx, wy);
+
+      // Round to nearest integer cell
+      const nearestRow = Math.round(row);
+      const nearestCol = Math.round(col);
+
+      // Compute the world-space center of that cell
+      const cellCenter = staggeredCellToWorldPos(nearestRow, nearestCol);
+
+      return {
+        row: nearestRow,
+        col: nearestCol,
+        x: cellCenter.x,
+        y: cellCenter.y
+      };
+    }
+
+    /**
+     * staggeredCellToWorldPos
+     * Converts integer row/col (in a staggered layout) to the center (wx, wy).
+     */
+    function staggeredCellToWorldPos(r, c) {
+      // row r => y = r * cellHeight
+      // col c => x = c * cellWidth
+      // shift if row is odd
+      const wy = r * cellHeight;
+      let wx = c * cellWidth;
+
+      if (r % 2 !== 0) {
+        wx += cellWidth * 0.5;
+      }
+
+      return { x: wx, y: wy };
+    }
+
+    /*********************************************************************
+     * BUILDINGS & DISTORTED SQUARE DRAWING
+     *********************************************************************/
+
+    // We'll store each building in terms of its (row, col) plus its center
+    const buildings = [];
+
+    const BUILDING_SIZE = 40;     // bounding size of each block
+    const BUILDING_COLOR = 'brown';
+
+    /**
+     * placeBuildingBlock
+     * Finds the nearest "Townscaper-like" staggered cell to the player
+     * and places a block if it’s not already occupied.
+     */
+    function placeBuildingBlock() {
+      const { row, col, x, y } = snapToNearestStaggeredCell(player.x, player.y);
+
+      // Check if that cell already has a building
+      const exists = buildings.some(b => b.row === row && b.col === col);
+      if (exists) return;
+
+      // Create new building. We'll again use a phase offset for corner distortion.
+      const phaseOffset = Math.random() * 2 * Math.PI;
+      buildings.push({
+        row, 
+        col,
+        centerX: x,
+        centerY: y,
+        phase: phaseOffset
+      });
+    }
+
+    /**
+     * drawDistortedSquare
+     * Similar approach as before: a square's corners are offset by small sine/cos wave.
+     */
+    function drawDistortedSquare(cx, cy, size, phase) {
+      const half = size / 2;
+      const amp = 6; // distortion amplitude
+
+      // Corner definitions (top-left, top-right, bottom-right, bottom-left)
+      const corners = [
+        {
+          x: -half + Math.sin(phase + 0) * amp,
+          y: -half + Math.cos(phase + 0) * amp
+        },
+        {
+          x:  half + Math.sin(phase + 1) * amp,
+          y: -half + Math.cos(phase + 1) * amp
+        },
+        {
+          x:  half + Math.sin(phase + 2) * amp,
+          y:  half + Math.cos(phase + 2) * amp
+        },
+        {
+          x: -half + Math.sin(phase + 3) * amp,
+          y:  half + Math.cos(phase + 3) * amp
+        }
+      ];
+
+      ctx.beginPath();
+      ctx.moveTo(cx + corners[0].x, cy + corners[0].y);
+      for (let i = 1; i < corners.length; i++) {
+        ctx.lineTo(cx + corners[i].x, cy + corners[i].y);
+      }
+      ctx.closePath();
+      ctx.fillStyle = BUILDING_COLOR;
+      ctx.fill();
+    }
+
+    /*********************************************************************
+     * GAME LOOP FUNCTIONS
+     *********************************************************************/
+    
+    let eKeyCooldown = false;
+    function update() {
+      // Player movement
+      if (keys.w) player.y -= player.speed;
+      if (keys.s) player.y += player.speed;
+      if (keys.a) player.x -= player.speed;
+      if (keys.d) player.x += player.speed;
+
+      // Ensure the player stays within the "world" boundaries
+      player.x = Math.max(0, Math.min(player.x, world.width));
+      player.y = Math.max(0, Math.min(player.y, world.height));
+
+      // Update camera position to follow player
+      camera.x = player.x - canvas.width / 2;
+      camera.y = player.y - canvas.height / 2;
+
+      // Prevent camera from going out of the world boundaries
+      camera.x = Math.max(0, Math.min(camera.x, world.width - canvas.width));
+      camera.y = Math.max(0, Math.min(camera.y, world.height - canvas.height));
+
+      // Building placement (with cooldown)
+      if (keys.e && !eKeyCooldown) {
+        placeBuildingBlock();
+        eKeyCooldown = true;
+        setTimeout(() => {
+          eKeyCooldown = false;
+        }, 150); // short cooldown to allow quick but controlled placement
+      }
+    }
+
+    function render() {
+      // Clear the entire canvas
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      // Draw terrain blobs
+      blobs.forEach((blob) => {
+        const screenX = blob.x - camera.x;
+        const screenY = blob.y - camera.y;
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(screenX, screenY, blob.radius, 0, 2 * Math.PI);
+        ctx.fillStyle = blob.color;
+        ctx.fill();
+        ctx.restore();
+      });
+
+      // OPTIONAL: World boundary
+      ctx.save();
+      ctx.strokeStyle = '#333';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(-camera.x, -camera.y, world.width, world.height);
+      ctx.restore();
+
+      // Draw buildings
+      buildings.forEach(b => {
+        const bx = b.centerX - camera.x;
+        const by = b.centerY - camera.y;
+        drawDistortedSquare(bx, by, BUILDING_SIZE, b.phase);
+      });
+
+      // Draw the player
+      ctx.save();
+      const px = player.x - camera.x;
+      const py = player.y - camera.y;
+      ctx.fillStyle = 'blue';
+      ctx.fillRect(px - 10, py - 10, 20, 20);
+      ctx.restore();
+    }
+
+    function mainLoop() {
+      update();
+      render();
+      requestAnimationFrame(mainLoop);
+    }
+
+    mainLoop();
+  </script>
+</body>
+</html>
