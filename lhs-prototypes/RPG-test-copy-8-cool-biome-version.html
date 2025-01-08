@@ -1,0 +1,498 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <title>Economics RPG - Dense Forests, Zoom, & Cards</title>
+  <style>
+    /* -------------------------------------------------------------------------
+       1) GENERAL UI & CANVAS STYLES
+    ------------------------------------------------------------------------- */
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #000;
+      font-family: "Gill Sans MT Condensed", "Gill Sans Condensed", sans-serif;
+    }
+
+    #gameCanvas {
+      display: block;
+      position: absolute;
+      left: 0;
+      top: 0;
+    }
+
+    /* Top-left UI */
+    #topLeftUI {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      display: flex; 
+      flex-direction: row; 
+      align-items: flex-start;
+      z-index: 1;
+    }
+
+    #portraitCanvas {
+      background: rgba(0, 0, 0, 0.5);
+      border: 1px solid #000;
+    }
+
+    #statsContainer {
+      color: white;
+      background: rgba(0, 0, 0, 0.5);
+      padding: 5px 10px;
+      border: 1px solid #000;
+      margin-left: 10px;
+    }
+
+    /* -------------------------------------------------------------------------
+       2) CARDS UI (BOTTOM)
+    ------------------------------------------------------------------------- */
+    #cardContainer {
+      position: absolute;
+      bottom: 10px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      flex-direction: row;
+      gap: 10px;
+      z-index: 1;
+    }
+
+    .card {
+      width: 40px;
+      height: 60px;
+      background: rgba(255,255,255,0.8);
+      border-radius: 4px;
+      box-shadow: 0 2px 5px rgba(0,0,0,0.6);
+      transition: transform 0.2s ease;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #333;
+      font-weight: bold;
+      user-select: none;
+      cursor: pointer;
+      font-size: 1.5em;
+    }
+    .card:hover {
+      transform: scale(1.1);
+    }
+
+    @keyframes wobble {
+      0%   { transform: rotate(0deg); }
+      20%  { transform: rotate(5deg); }
+      40%  { transform: rotate(-5deg); }
+      60%  { transform: rotate(3deg); }
+      80%  { transform: rotate(-3deg); }
+      100% { transform: rotate(0deg); }
+    }
+    .wobble {
+      animation: wobble 0.4s ease;
+    }
+  </style>
+</head>
+<body>
+
+<!-- 
+  ============================================================================
+    BRIEF GAME DESCRIPTION:
+    -----------------------
+    - We subdivide a 2000×2000 world into ~20 rectangular biomes 
+      (Grassland 70%, Forest 30%). 
+    - We forcibly cut very long rectangles (aspect ratio > 2) 
+      to avoid black screen issues or single giant rect.
+    - Then we add small forest patches inside grasslands.
+    - Then we fill forests with extremely dense trees (1 per ~300 px²).
+    - WASD to move the player, mouse wheel to zoom in/out (0.5–3.0).
+    - 5 clickable "cards" at the bottom (🧱🔲🚪🍽🛏).
+    - A "crush.wav" sound plays when stepping on a tree, which respawns in 5–15s.
+  ============================================================================
+-->
+
+<canvas id="gameCanvas"></canvas>
+
+<div id="topLeftUI">
+  <canvas id="portraitCanvas" width="80" height="80"></canvas>
+  <div id="statsContainer">
+    <div>Utility: <span id="utilityValue">0</span></div>
+    <div>Money: $<span id="moneyValue">0</span></div>
+  </div>
+</div>
+
+<div id="cardContainer">
+  <div class="card" id="card1">🧱</div> <!-- wall piece -->
+  <div class="card" id="card2">🔲</div> <!-- floor piece -->
+  <div class="card" id="card3">🚪</div> <!-- door -->
+  <div class="card" id="card4">🍽</div> <!-- dinner table -->
+  <div class="card" id="card5">🛏</div> <!-- bed -->
+</div>
+
+<script>
+//------------------------------------------------------------------------------
+// 1) CANVAS & BASIC UI SETUP
+//------------------------------------------------------------------------------
+const canvas = document.getElementById("gameCanvas");
+const ctx = canvas.getContext("2d");
+
+function resizeCanvas() {
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+}
+window.addEventListener("resize", resizeCanvas);
+resizeCanvas();
+
+// Stats
+let utilityValue = 0;
+let moneyValue = 0;
+document.getElementById("utilityValue").textContent = utilityValue;
+document.getElementById("moneyValue").textContent = moneyValue;
+
+// Card click => wobble
+const cardElems = document.querySelectorAll(".card");
+cardElems.forEach(card => {
+  card.addEventListener("click", () => {
+    card.classList.remove("wobble");
+    void card.offsetWidth; // reflow
+    card.classList.add("wobble");
+  });
+});
+
+// Portrait
+const portraitCanvas = document.getElementById("portraitCanvas");
+const portraitCtx = portraitCanvas.getContext("2d");
+drawPortraitFace(portraitCtx);
+
+//------------------------------------------------------------------------------
+// 2) WORLD & BIOMES
+//------------------------------------------------------------------------------
+const WORLD_WIDTH = 2000;
+const WORLD_HEIGHT = 2000;
+const NUM_BIOMES = 20;
+
+// Weighted random
+function pickBiomeType() {
+  return Math.random() < 0.7
+    ? { type: "grassland", color: "#adce5f" }
+    : { type: "forest",    color: "#5d9141" };
+}
+
+const biomes = [];
+
+// We'll keep subdividing rects until we get ~NUM_BIOMES
+// or we run out of subdividable rects
+function generateMainBiomes() {
+  let stack = [{ x: 0, y: 0, w: WORLD_WIDTH, h: WORLD_HEIGHT }];
+  let attempts = 0;
+
+  while (stack.length < NUM_BIOMES && attempts < 100) {
+    attempts++;
+    if (stack.length === 0) break;
+
+    let rect = stack.pop();
+    const aspect = (rect.w > rect.h) ? (rect.w / rect.h) : (rect.h / rect.w);
+    const mustCut = (aspect > 2); 
+    // If it's extremely elongated, we force a cut.
+
+    // Decide whether to cut horizontally or vertically
+    let cutHoriz = Math.random() < 0.5;
+    if (mustCut) {
+      // force cut along the longer dimension
+      cutHoriz = (rect.h > rect.w); 
+    }
+
+    const MIN_DIM = 50;
+    if (cutHoriz && rect.h > MIN_DIM*2) {
+      // horizontal cut
+      const cutY = randomRange(rect.y + MIN_DIM, rect.y + rect.h - MIN_DIM);
+      let topRect = { x: rect.x, y: rect.y, w: rect.w, h: cutY - rect.y };
+      let bottomRect = { x: rect.x, y: cutY, w: rect.w, h: rect.y+rect.h - cutY };
+      stack.push(topRect, bottomRect);
+    }
+    else if (!cutHoriz && rect.w > MIN_DIM*2) {
+      // vertical cut
+      const cutX = randomRange(rect.x + MIN_DIM, rect.x + rect.w - MIN_DIM);
+      let leftRect =  { x: rect.x,    y: rect.y, w: cutX - rect.x,              h: rect.h };
+      let rightRect = { x: cutX,      y: rect.y, w: rect.x+rect.w - cutX,       h: rect.h };
+      stack.push(leftRect, rightRect);
+    }
+    else {
+      // finalize
+      let bType = pickBiomeType();
+      biomes.push({
+        x: rect.x, y: rect.y,
+        w: rect.w, h: rect.h,
+        type: bType.type,
+        color: bType.color
+      });
+    }
+  }
+
+  // finalize leftover stack
+  while (stack.length) {
+    let r = stack.pop();
+    let bType = pickBiomeType();
+    biomes.push({
+      x: r.x, y: r.y,
+      w: r.w, h: r.h,
+      type: bType.type,
+      color: bType.color
+    });
+  }
+}
+
+generateMainBiomes();
+
+/*
+  Add forest patches inside grassland
+*/
+function addForestPatches() {
+  const newBiomes = [];
+  for (let b of biomes) {
+    if (b.type !== "grassland") continue;
+
+    let patchCount = randomRange(1, 3);
+    for (let i = 0; i < patchCount; i++) {
+      let patchW = randomRange(50, Math.floor(b.w/2));
+      let patchH = randomRange(50, Math.floor(b.h/2));
+      if (patchW < 20 || patchH < 20) continue;
+      let px = randomRange(b.x, b.x + b.w - patchW);
+      let py = randomRange(b.y, b.y + b.h - patchH);
+      newBiomes.push({
+        x: px, y: py, w: patchW, h: patchH,
+        type: "forest", color: "#5d9141"
+      });
+    }
+  }
+  biomes.push(...newBiomes);
+}
+addForestPatches();
+
+// Debug: see how many biomes we got
+console.log("Total biomes:", biomes.length);
+
+//------------------------------------------------------------------------------
+// 3) TREES (Extremely Dense in Forests)
+//------------------------------------------------------------------------------
+const trees = [];
+
+function generateTrees() {
+  let forestCount = 0;
+  let totalTrees = 0;
+
+  for (let b of biomes) {
+    if (b.type !== "forest") continue;
+    forestCount++;
+    let area = b.w * b.h;
+    let numTrees = Math.floor(area / 300);
+    if (numTrees < 10) numTrees = 10;
+    totalTrees += numTrees;
+
+    for (let i = 0; i < numTrees; i++) {
+      let tx = randomRange(b.x, b.x + b.w);
+      let ty = randomRange(b.y, b.y + b.h);
+      trees.push({
+        x: tx,
+        y: ty,
+        crushedTime: null,
+        respawnDelay: randomRange(5000, 15000)
+      });
+    }
+  }
+  console.log(`Forest patches: ${forestCount}, total trees: ${totalTrees}`);
+}
+generateTrees();
+
+// Helper for random range
+function randomRange(min, max) {
+  return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+//------------------------------------------------------------------------------
+// 4) PLAYER, CAMERA, ZOOM
+//------------------------------------------------------------------------------
+const player = { x: 100, y: 100, size: 4, speed: 3 };
+
+// Zoom
+let zoom = 1.0;
+const MIN_ZOOM = 0.5;
+const MAX_ZOOM = 3.0;
+
+const camera = { x: 0, y: 0 };
+
+const keys = {};
+window.addEventListener("keydown", e => {
+  keys[e.key.toLowerCase()] = true;
+});
+window.addEventListener("keyup", e => {
+  keys[e.key.toLowerCase()] = false;
+});
+
+// Mouse wheel => zoom
+window.addEventListener("wheel", e => {
+  e.preventDefault();
+  if (e.deltaY < 0) {
+    // zoom in
+    zoom += 0.1;
+    if (zoom > MAX_ZOOM) zoom = MAX_ZOOM;
+  } else {
+    // zoom out
+    zoom -= 0.1;
+    if (zoom < MIN_ZOOM) zoom = MIN_ZOOM;
+  }
+}, { passive: false });
+
+//------------------------------------------------------------------------------
+// 5) MAIN LOOP
+//------------------------------------------------------------------------------
+function update() {
+  // Move
+  if (keys["w"] || keys["arrowup"])    player.y -= player.speed;
+  if (keys["s"] || keys["arrowdown"])  player.y += player.speed;
+  if (keys["a"] || keys["arrowleft"])  player.x -= player.speed;
+  if (keys["d"] || keys["arrowright"]) player.x += player.speed;
+
+  // Bound
+  if (player.x < 0) player.x = 0;
+  if (player.y < 0) player.y = 0;
+  if (player.x > WORLD_WIDTH)  player.x = WORLD_WIDTH;
+  if (player.y > WORLD_HEIGHT) player.y = WORLD_HEIGHT;
+
+  // Crush trees
+  crushTreesUnderPlayer();
+
+  // Adjust camera
+  const viewW = canvas.width / zoom;
+  const viewH = canvas.height / zoom;
+  camera.x = player.x - viewW/2;
+  camera.y = player.y - viewH/2;
+
+  // clamp
+  if (camera.x < 0) camera.x = 0;
+  if (camera.y < 0) camera.y = 0;
+  if (camera.x + viewW > WORLD_WIDTH) {
+    camera.x = WORLD_WIDTH - viewW;
+  }
+  if (camera.y + viewH > WORLD_HEIGHT) {
+    camera.y = WORLD_HEIGHT - viewH;
+  }
+}
+
+function draw() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  ctx.save();
+  ctx.translate(-camera.x * zoom, -camera.y * zoom);
+  ctx.scale(zoom, zoom);
+
+  // Draw biomes
+  for (let b of biomes) {
+    ctx.fillStyle = b.color;
+    ctx.fillRect(b.x, b.y, b.w, b.h);
+  }
+
+  // Draw trees
+  const now = Date.now();
+  for (let t of trees) {
+    if (t.crushedTime !== null && now < t.crushedTime + t.respawnDelay) {
+      continue;
+    }
+    // trunk
+    ctx.fillStyle = "brown";
+    ctx.fillRect(t.x - 2, t.y, 4, 6);
+
+    // pine
+    ctx.fillStyle = "darkgreen";
+    ctx.beginPath();
+    ctx.moveTo(t.x, t.y - 20);
+    ctx.lineTo(t.x - 10, t.y);
+    ctx.lineTo(t.x + 10, t.y);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  // Draw player
+  ctx.beginPath();
+  ctx.arc(player.x, player.y, player.size, 0, 2*Math.PI);
+  ctx.fillStyle = "white";
+  ctx.fill();
+
+  ctx.restore();
+}
+
+function gameLoop() {
+  update();
+  draw();
+  requestAnimationFrame(gameLoop);
+}
+gameLoop();
+
+//------------------------------------------------------------------------------
+// 6) SOUND: CRUSH TREES
+//------------------------------------------------------------------------------
+const crushSound = new Audio();
+crushSound.src = "crush.wav"; // ensure this file is valid
+crushSound.crossOrigin = "anonymous";
+
+function crushTreesUnderPlayer() {
+  const now = Date.now();
+  for (let tree of trees) {
+    if (tree.crushedTime !== null) {
+      // respawn?
+      if (now > tree.crushedTime + tree.respawnDelay) {
+        tree.crushedTime = null;
+      }
+      continue;
+    }
+    // check collision
+    const dx = player.x - tree.x;
+    const dy = player.y - tree.y;
+    const dist = Math.sqrt(dx*dx + dy*dy);
+    if (dist < 10) {
+      // crush
+      tree.crushedTime = now;
+      crushSound.currentTime = 0;
+      crushSound.play().catch(err => {
+        console.warn("Sound playback blocked:", err);
+      });
+    }
+  }
+}
+
+//------------------------------------------------------------------------------
+// 7) PORTRAIT DRAWING
+//------------------------------------------------------------------------------
+function drawPortraitFace(pCtx) {
+  pCtx.clearRect(0, 0, portraitCanvas.width, portraitCanvas.height);
+  const cx = portraitCanvas.width / 2;
+  const cy = portraitCanvas.height / 2;
+
+  // Face circle
+  pCtx.beginPath();
+  pCtx.arc(cx, cy, 25, 0, 2*Math.PI);
+  pCtx.fillStyle = "#f2d9b2";
+  pCtx.fill();
+  pCtx.strokeStyle = "#000";
+  pCtx.stroke();
+
+  // Eyes
+  pCtx.fillStyle = "#000";
+  pCtx.beginPath();
+  pCtx.arc(cx - 8, cy - 5, 3, 0, 2*Math.PI);
+  pCtx.fill();
+  pCtx.beginPath();
+  pCtx.arc(cx + 8, cy - 5, 3, 0, 2*Math.PI);
+  pCtx.fill();
+
+  // Smile
+  pCtx.beginPath();
+  pCtx.arc(cx, cy + 5, 8, 0, Math.PI, false);
+  pCtx.strokeStyle = "#000";
+  pCtx.stroke();
+}
+</script>
+</body>
+</html>
