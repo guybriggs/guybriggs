@@ -1,0 +1,873 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <title>Two-Biome RPG - Build & Delete, Custom Bed & Table with Demanders</title>
+  <style>
+    /* ==========================================================================
+       Game Description
+    ========================================================================== */
+    /* 
+      Two-Biome RPG is a 2D exploration and building game where players can construct
+      various structures in two distinct biomes: Grassland and Forest. Each building
+      action introduces a demander in the market, visualized as colored triangles.
+      Players can move around, interact with trees, and manage their resources.
+    */
+
+    /* ==========================================================================
+       Basic Styles
+    ========================================================================== */
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #000;
+      font-family: "Gill Sans MT Condensed", "Gill Sans Condensed", sans-serif;
+    }
+    #gameCanvas {
+      display: block;
+      position: absolute;
+      left: 0;
+      top: 0;
+    }
+
+    /* ==========================================================================
+       Top-left UI (Portrait + Stats)
+    ========================================================================== */
+    #topLeftUI {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      display: flex;
+      flex-direction: row;
+      align-items: flex-start;
+      z-index: 1;
+    }
+    #portraitCanvas {
+      background: rgba(0,0,0,0.5);
+      border: 1px solid #000;
+    }
+    #statsContainer {
+      color: white;
+      background: rgba(0,0,0,0.5);
+      padding: 5px 10px;
+      border: 1px solid #000;
+      margin-left: 10px;
+      font-size: 14px;
+    }
+
+    /* ==========================================================================
+       Bottom Card UI
+    ========================================================================== */
+    #cardContainer {
+      position: absolute;
+      bottom: 10px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      flex-direction: row;
+      gap: 10px;
+      z-index: 1;
+    }
+    .card {
+      width: 40px;
+      height: 60px;
+      background: rgba(255,255,255,0.8);
+      border-radius: 4px;
+      box-shadow: 0 2px 5px rgba(0,0,0,0.6);
+      transition: transform 0.2s ease;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #333;
+      font-weight: bold;
+      user-select: none;
+      cursor: pointer;
+      font-size: 1.5em;
+    }
+    .card:hover {
+      transform: scale(1.1);
+    }
+    @keyframes wobble {
+      0%   { transform: rotate(0deg); }
+      20%  { transform: rotate(5deg); }
+      40%  { transform: rotate(-5deg); }
+      60%  { transform: rotate(3deg); }
+      80%  { transform: rotate(-3deg); }
+      100% { transform: rotate(0deg); }
+    }
+    .wobble {
+      animation: wobble 0.4s ease;
+    }
+  </style>
+</head>
+<body>
+<canvas id="gameCanvas"></canvas>
+
+<!-- Top-left UI (Portrait + Stats) -->
+<div id="topLeftUI">
+  <canvas id="portraitCanvas" width="80" height="80"></canvas>
+  <div id="statsContainer">
+    <div>Utility: <span id="utilityValue">0</span></div>
+    <div>Money: $<span id="moneyValue">0</span></div>
+  </div>
+</div>
+
+<!-- Bottom card UI -->
+<div id="cardContainer">
+  <div class="card" id="card1">🧱</div>
+  <div class="card" id="card2">⬛</div>
+  <div class="card" id="card3">🚪</div>
+  <div class="card" id="card4">🍽</div>
+  <div class="card" id="card5">🛏</div>
+</div>
+
+<script>
+/*
+===============================================================================
+  1) SETUP CANVAS & GAME CONSTANTS
+===============================================================================
+*/
+const canvas = document.getElementById("gameCanvas");
+const ctx = canvas.getContext("2d");
+
+function resizeCanvas() {
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+}
+window.addEventListener("resize", resizeCanvas);
+resizeCanvas();
+
+const WORLD_WIDTH = 2000;
+const WORLD_HEIGHT = 2000;
+
+// Stats
+let utilityValue = 0;
+let moneyValue = 0;
+document.getElementById("utilityValue").textContent = utilityValue;
+document.getElementById("moneyValue").textContent = moneyValue;
+
+/*
+===============================================================================
+  2) CARD SELECTION + RIGHT-CLICK CANCEL
+===============================================================================
+*/
+let selectedCard = null;
+
+// Cards: click => wobble + set selectedCard
+const cardElems = document.querySelectorAll(".card");
+cardElems.forEach(card => {
+  card.addEventListener("click", () => {
+    card.classList.remove("wobble");
+    void card.offsetWidth; // reflow
+    card.classList.add("wobble");
+
+    switch(card.id) {
+      case "card1": selectedCard = "wall";  break;
+      case "card2": selectedCard = "floor"; break;
+      case "card3": selectedCard = "door";  break;
+      case "card4": selectedCard = "table"; break;
+      case "card5": selectedCard = "bed";   break;
+      default:      selectedCard = null;
+    }
+  });
+});
+
+// Prevent context menu on canvas
+canvas.addEventListener("contextmenu", (e) => {
+  e.preventDefault();
+});
+
+/*
+===============================================================================
+  3) BIOMES (Left=Grassland, Right=Forest) + Trees
+===============================================================================
+*/
+const biomes = [
+  // Grassland: left half
+  { x: 0,    y: 0, w: 1000, h: 2000, color: "#adce5f" },
+  // Forest: right half
+  { x: 1000, y: 0, w: 1000, h: 2000, color: "#5d9141" },
+];
+
+const trees = [];
+function createForestTrees() {
+  const stepX = 30;
+  const stepY = 30;
+  for (let x = 1000; x < 2000; x += stepX) {
+    for (let y = 0; y < 2000; y += stepY) {
+      trees.push({
+        x, y,
+        crushedTime: null,
+        respawnDelay: randomRange(5000, 15000),
+      });
+    }
+  }
+}
+createForestTrees();
+
+/*
+===============================================================================
+  4) PLAYERS
+===============================================================================
+*/
+const player = {
+  x: 1000,
+  y: 1000,
+  size: 8,
+  color: "white",
+  name: "You", // Assigned name for demanders
+};
+
+const sam = {
+  x: 1040,
+  y: 1000,
+  size: 8,
+  color: "cyan",
+  name: "Sam",
+};
+
+const SIMPLE_NAMES = [
+  "Alex","Bea","Cal","Dee","Eli","Finn","Gail","Hank","Ira","Jay",
+  "Kai","Lia","Mia","Noa","Ora","Pax","Qin","Rae","Tao","Uma"
+];
+let otherPlayers = [];
+function initOtherPlayers() {
+  const positions = [
+    { x: 900,  y: 950 },
+    { x:1080,  y:1040 },
+    { x:1200,  y:1000 },
+    { x:800,   y:1200 },
+    { x:1150,  y:1100 },
+    { x:1300,  y: 500 },
+    { x:700,   y: 900 },
+    { x:1400,  y:1250 },
+    { x:600,   y:1400 },
+    { x:1500,  y:1350 }
+  ];
+  for (let i = 0; i < 10; i++) {
+    otherPlayers.push({
+      x: positions[i].x,
+      y: positions[i].y,
+      size: 5,
+      color: randomColor(),
+      name: SIMPLE_NAMES[i],
+    });
+  }
+}
+initOtherPlayers();
+
+/*
+===============================================================================
+  5) SPARKLE WHEN PLAYER SPAWNS
+===============================================================================
+*/
+let sparkles = [];
+let sparkleStartTime = Date.now();
+const SPARKLE_DURATION = 1000;
+
+function createSpawnSparkles() {
+  for (let i = 0; i < 20; i++) {
+    const angle = Math.random() * 2*Math.PI;
+    const dist = 10 + Math.random()*15;
+    sparkles.push({
+      x: player.x,
+      y: player.y,
+      offX: dist*Math.cos(angle),
+      offY: dist*Math.sin(angle),
+      start: sparkleStartTime,
+      life: SPARKLE_DURATION,
+    });
+  }
+}
+createSpawnSparkles();
+
+/*
+===============================================================================
+  6) BUILDINGS ON A 20×20 GRID & NON-GRID BUILDINGS
+===============================================================================
+*/
+const GRID_SIZE = 20;
+const gridBuildings = [];      // Walls, Floors, Doors
+const nonGridBuildings = [];   // Tables, Beds
+
+/*
+===============================================================================
+  7) DEMANDERS
+===============================================================================
+*/
+const demanders = []; // Array to hold demander objects
+
+// Define unique colors for each demander type
+const demanderColors = {
+  wall: "#FF6347",     // Tomato
+  floor: "#1E90FF",    // DodgerBlue
+  door: "#32CD32",     // LimeGreen
+  table: "#FFD700",    // Gold
+  bed: "#BA55D3"        // MediumOrchid
+};
+
+// Create a demander
+function createDemander(type, x, y) {
+  const demander = {
+    type: type,
+    x: x,
+    y: y,
+    size: player.size, // same size as player circle
+    color: demanderColors[type] || "#FFFFFF", // Default to white if type not found
+  };
+  
+  // Arrange demanders nearby each other without overlapping
+  const spawnArea = {
+    x: 200, // Left center X position
+    y: WORLD_HEIGHT / 2, // Center Y position
+    spacing: GRID_SIZE + 5, // Spacing between demanders
+  };
+  const index = demanders.length;
+  const cols = 5; // Number of columns in spawn area
+  const row = Math.floor(index / cols);
+  const col = index % cols;
+  demander.x = spawnArea.x + col * spawnArea.spacing;
+  demander.y = spawnArea.y + row * spawnArea.spacing;
+  demanders.push(demander);
+}
+
+// Remove a demander based on position
+function removeDemander(x, y) {
+  const index = demanders.findIndex(d => 
+    Math.abs(d.x - x) < 1 && Math.abs(d.y - y) < 1
+  );
+  if (index !== -1) {
+    demanders.splice(index, 1);
+    // Rearrange demanders to maintain nearby placement
+    rearrangeDemanders();
+  }
+}
+
+// Rearrange demanders to maintain nearby placement
+function rearrangeDemanders() {
+  const spawnArea = {
+    x: 200, // Left center X position
+    y: WORLD_HEIGHT / 2, // Center Y position
+    spacing: GRID_SIZE + 5, // Spacing between demanders
+  };
+  const cols = 5; // Number of columns in spawn area
+  demanders.forEach((d, index) => {
+    const row = Math.floor(index / cols);
+    const col = index % cols;
+    d.x = spawnArea.x + col * spawnArea.spacing;
+    d.y = spawnArea.y + row * spawnArea.spacing;
+  });
+}
+
+// Place grid-based building
+function placeGridBuildingAt(gx, gy, type) {
+  let color = "white"; // default color
+
+  switch(type) {
+    case "floor":
+      color = "#4e2b15"; // dark brown
+      break;
+    case "door":
+      color = "#c18e5a"; // light brown
+      break;
+    case "wall":
+    default:
+      color = "white";
+      break;
+  }
+
+  gridBuildings.push({
+    gridX: gx,
+    gridY: gy,
+    x: gx * GRID_SIZE,
+    y: gy * GRID_SIZE,
+    width: GRID_SIZE,
+    height: GRID_SIZE,
+    color: color,
+    type: type
+  });
+
+  // Create a demander for this building
+  const demanderX = gx * GRID_SIZE + GRID_SIZE / 2;
+  const demanderY = gy * GRID_SIZE + GRID_SIZE / 2;
+  createDemander(type, demanderX, demanderY);
+}
+
+// Place non-grid building
+function placeNonGridBuildingAt(x, y, type) {
+  let width = GRID_SIZE;
+  let height = GRID_SIZE;
+  let color = "white"; // default color
+
+  switch(type) {
+    case "table":
+      color = "#d2a679"; // light brown for table
+      width = 30;
+      height = 30;
+      break;
+    case "bed":
+      color = "#add8e6"; // light blue for bed
+      width = 20;
+      height = 30;
+      break;
+    default:
+      return; // Do nothing for other types
+  }
+
+  // Check for overlap
+  if (isNonGridOverlap(x, y, width, height)) return;
+
+  nonGridBuildings.push({
+    x: x,
+    y: y,
+    width: width,
+    height: height,
+    color: color,
+    type: type
+  });
+
+  // Create a demander for this building
+  const demanderX = x + width / 2;
+  const demanderY = y + height / 2;
+  createDemander(type, demanderX, demanderY);
+}
+
+// Delete building at grid cell
+function deleteGridBuildingAt(gx, gy) {
+  const index = gridBuildings.findIndex(b => b.gridX === gx && b.gridY === gy);
+  if (index !== -1) {
+    // Also remove corresponding demander
+    const building = gridBuildings[index];
+    const demanderX = building.x + GRID_SIZE / 2;
+    const demanderY = building.y + GRID_SIZE / 2;
+    removeDemander(demanderX, demanderY);
+    gridBuildings.splice(index, 1);
+  }
+}
+
+// Delete non-grid building at position
+function deleteNonGridBuildingAt(x, y) {
+  const index = nonGridBuildings.findIndex(b => 
+    x >= b.x && x < b.x + b.width &&
+    y >= b.y && y < b.y + b.height
+  );
+  if (index !== -1) {
+    // Also remove corresponding demander
+    const building = nonGridBuildings[index];
+    const demanderX = building.x + building.width / 2;
+    const demanderY = building.y + building.height / 2;
+    removeDemander(demanderX, demanderY);
+    nonGridBuildings.splice(index, 1);
+  }
+}
+
+// The main “mouse action”
+function handleMouseAction(e, action) { // action: 'place' or 'delete'
+  const { x, y } = screenToWorld(e.clientX, e.clientY);
+
+  if (selectedCard === "table" || selectedCard === "bed") {
+    if (action === 'place') {
+      // Calculate top-left position to center the shape
+      let width = (selectedCard === "table") ? 30 : 20;
+      let height = (selectedCard === "table") ? 30 : 30;
+      const topLeftX = x - width / 2;
+      const topLeftY = y - height / 2;
+
+      placeNonGridBuildingAt(topLeftX, topLeftY, selectedCard);
+    }
+  } else {
+    const { gx, gy } = snapToGrid(x, y);
+    if (action === 'place') {
+      if (canPlaceGridBuilding(gx, gy)) {
+        placeGridBuildingAt(gx, gy, selectedCard);
+      }
+    } else if (action === 'delete') {
+      deleteGridBuildingAt(gx, gy);
+    }
+  }
+
+  if (selectedCard !== "table" && selectedCard !== "bed" && action === 'delete') {
+    // Also attempt to delete non-grid buildings if present
+    deleteNonGridBuildingAt(x, y);
+  }
+}
+
+// Mouse events
+canvas.addEventListener("mousedown", (e) => {
+  if (e.button === 0) { // left button
+    isLeftMouseDown = true;
+    handleMouseAction(e, 'place');
+  } else if (e.button === 2) { // right button
+    isRightMouseDown = true;
+    handleMouseAction(e, 'delete');
+  }
+});
+
+canvas.addEventListener("mousemove", (e) => {
+  mouseScreenX = e.clientX;
+  mouseScreenY = e.clientY;
+  if (isLeftMouseDown && e.buttons === 1) { // still left-button down
+    handleMouseAction(e, 'place');
+  }
+  if (isRightMouseDown && e.buttons === 2) { // still right-button down
+    handleMouseAction(e, 'delete');
+  }
+});
+
+canvas.addEventListener("mouseup", (e) => {
+  if (e.button === 0) { // left button
+    isLeftMouseDown = false;
+  } else if (e.button === 2) { // right button
+    isRightMouseDown = false;
+  }
+});
+
+/*
+===============================================================================
+  8) CAMERA & MOUSE INTERACTION
+===============================================================================
+*/
+let zoom = 3.0;
+const MIN_ZOOM = 0.5;
+const MAX_ZOOM = 3.0;
+const camera = { x: 0, y: 0 };
+
+let isLeftMouseDown = false;
+let isRightMouseDown = false;
+
+let mouseScreenX = 0;
+let mouseScreenY = 0;
+
+// Convert screen coords to world coords
+function screenToWorld(sx, sy) {
+  const rect = canvas.getBoundingClientRect();
+  const x = (sx - rect.left) / zoom + camera.x;
+  const y = (sy - rect.top) / zoom + camera.y;
+  return { x, y };
+}
+
+// Snap to grid
+function snapToGrid(worldX, worldY) {
+  const gx = Math.floor(worldX / GRID_SIZE);
+  const gy = Math.floor(worldY / GRID_SIZE);
+  return { gx, gy };
+}
+
+// Mouse wheel => zoom
+window.addEventListener("wheel", e => {
+  e.preventDefault();
+  if (e.deltaY < 0) {
+    zoom += 0.1;
+    if (zoom > MAX_ZOOM) zoom = MAX_ZOOM;
+  } else {
+    zoom -= 0.1;
+    if (zoom < MIN_ZOOM) zoom = MIN_ZOOM;
+  }
+}, { passive: false });
+
+// Keyboard
+const keys = {};
+window.addEventListener("keydown", e => {
+  keys[e.key.toLowerCase()] = true;
+});
+window.addEventListener("keyup", e => {
+  keys[e.key.toLowerCase()] = false;
+});
+
+/*
+===============================================================================
+  9) PLACEMENT & DELETION LOGIC
+===============================================================================
+*/
+// Check if a grid cell is occupied
+function isGridCellOccupied(gx, gy) {
+  return gridBuildings.some(b => b.gridX === gx && b.gridY === gy);
+}
+
+// Check adjacency for grid-based buildings
+function canPlaceGridBuilding(gx, gy) {
+  if (isGridCellOccupied(gx, gy)) return false;
+  if (gridBuildings.length === 0) return true; // first building => anywhere
+  const offsets = [
+    { dx:  1, dy:  0 },
+    { dx: -1, dy:  0 },
+    { dx:  0, dy:  1 },
+    { dx:  0, dy: -1 },
+  ];
+  for (let off of offsets) {
+    if (isGridCellOccupied(gx + off.dx, gy + off.dy)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// Check if a non-grid building overlaps existing non-grid buildings
+function isNonGridOverlap(x, y, width, height) {
+  return nonGridBuildings.some(b => rectanglesOverlap(x, y, width, height, b.x, b.y, b.width, b.height));
+}
+
+// Rectangle collision detection
+function rectanglesOverlap(x1, y1, w1, h1, x2, y2, w2, h2) {
+  return !(x1 + w1 <= x2 || x1 >= x2 + w2 ||
+           y1 + h1 <= y2 || y1 >= y2 + h2);
+}
+
+/*
+===============================================================================
+  10) UPDATE & DRAW
+===============================================================================
+*/
+function update() {
+  // Move the player
+  if (keys["w"] || keys["arrowup"])    player.y -= 4;
+  if (keys["s"] || keys["arrowdown"])  player.y += 4;
+  if (keys["a"] || keys["arrowleft"])  player.x -= 4;
+  if (keys["d"] || keys["arrowright"]) player.x += 4;
+
+  // Boundaries
+  if (player.x < 0) player.x = 0;
+  if (player.y < 0) player.y = 0;
+  if (player.x > WORLD_WIDTH)  player.x = WORLD_WIDTH;
+  if (player.y > WORLD_HEIGHT) player.y = WORLD_HEIGHT;
+
+  // Trees crush
+  crushTreesUnderPlayer(player);
+  crushTreesUnderPlayer(sam);
+  otherPlayers.forEach(p => crushTreesUnderPlayer(p));
+
+  // Center camera on player
+  const viewW = canvas.width / zoom;
+  const viewH = canvas.height / zoom;
+  camera.x = player.x - viewW / 2;
+  camera.y = player.y - viewH / 2;
+
+  // Clamp camera
+  if (camera.x < 0) camera.x = 0;
+  if (camera.y < 0) camera.y = 0;
+  if (camera.x + viewW > WORLD_WIDTH) {
+    camera.x = WORLD_WIDTH - viewW;
+  }
+  if (camera.y + viewH > WORLD_HEIGHT) {
+    camera.y = WORLD_HEIGHT - viewH;
+  }
+
+  // Remove expired sparkles
+  const now = Date.now();
+  sparkles = sparkles.filter(s => (now - s.start) < s.life);
+}
+
+function draw() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  // Camera transform
+  ctx.save();
+  ctx.translate(-camera.x * zoom, -camera.y * zoom);
+  ctx.scale(zoom, zoom);
+
+  // 1) Draw grassland + forest
+  biomes.forEach(b => {
+    ctx.fillStyle = b.color;
+    ctx.fillRect(b.x, b.y, b.w, b.h);
+  });
+
+  // 2) Draw trees (skip crushed)
+  const now = Date.now();
+  for (let t of trees) {
+    if (t.crushedTime && now < t.crushedTime + t.respawnDelay) continue;
+    // trunk
+    ctx.fillStyle = "#bda869";
+    ctx.fillRect(t.x - 2, t.y, 4, 6);
+    // pine
+    ctx.fillStyle = "darkgreen";
+    ctx.beginPath();
+    ctx.moveTo(t.x, t.y - 20);
+    ctx.lineTo(t.x - 10, t.y);
+    ctx.lineTo(t.x + 10, t.y);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  // 3) Draw grid-based buildings (walls, floors, doors)
+  gridBuildings.forEach(b => {
+    ctx.fillStyle = b.color;
+    ctx.fillRect(b.x, b.y, b.width, b.height);
+
+    // If door => small handle
+    if (b.type === "door") {
+      ctx.fillStyle = "#44342a";
+      ctx.fillRect(b.x + 6, b.y + 3, 8, 14);
+    }
+  });
+
+  // 4) Draw non-grid buildings (tables, beds)
+  nonGridBuildings.forEach(b => {
+    ctx.fillStyle = b.color;
+    ctx.fillRect(b.x, b.y, b.width, b.height);
+  });
+
+  // 5) Draw demanders
+  demanders.forEach(d => {
+    // Draw triangle with specific color
+    ctx.fillStyle = d.color;
+    ctx.beginPath();
+    ctx.moveTo(d.x, d.y - d.size);
+    ctx.lineTo(d.x - d.size, d.y + d.size);
+    ctx.lineTo(d.x + d.size, d.y + d.size);
+    ctx.closePath();
+    ctx.fill();
+
+    // Removed labels above demanders
+    // Previously: ctx.fillText(`${d.label} (${d.playerName})`, d.x, d.y - d.size - 5);
+  });
+
+  // 6) Draw players on top of everything
+  drawOnePlayer(sam, true);
+  otherPlayers.forEach(p => drawOnePlayer(p, true));
+  drawOnePlayer(player, false); // no label for main player
+
+  // 7) Sparkles
+  for (let s of sparkles) {
+    const alpha = 1 - ((now - s.start)/s.life);
+    ctx.fillStyle = `rgba(255,255,0,${alpha})`;
+    ctx.beginPath();
+    ctx.arc(s.x + s.offX, s.y + s.offY, 2, 0, 2*Math.PI);
+    ctx.fill();
+  }
+
+  // 8) Mouse “preview” if a card is selected
+  if (selectedCard) {
+    const { x: wx, y: wy } = screenToWorld(mouseScreenX, mouseScreenY);
+
+    ctx.globalAlpha = 0.6;
+    if (selectedCard === "bed") {
+      // Light blue 20x30 rectangle centered at cursor
+      ctx.fillStyle = "#add8e6";
+      ctx.fillRect(wx - 10, wy - 15, 20, 30);
+    } else if (selectedCard === "table") {
+      // Light brown 30x30 square centered at cursor
+      ctx.fillStyle = "#d2a679";
+      ctx.fillRect(wx - 15, wy - 15, 30, 30);
+    } else {
+      // For wall, floor, door: draw colored rectangle snapped to grid
+      const { gx, gy } = snapToGrid(wx, wy);
+      const px = gx * GRID_SIZE;
+      const py = gy * GRID_SIZE;
+
+      let previewColor = "white";
+      if (selectedCard === "floor") previewColor = "#4e2b15";
+      if (selectedCard === "door")  previewColor = "#c18e5a";
+      if (selectedCard === "wall")  previewColor = "white";
+      ctx.fillStyle = previewColor;
+      ctx.fillRect(px, py, GRID_SIZE, GRID_SIZE);
+    }
+    ctx.globalAlpha = 1.0;
+  }
+
+  ctx.restore();
+}
+
+function gameLoop() {
+  update();
+  draw();
+  requestAnimationFrame(gameLoop);
+}
+gameLoop();
+
+/*
+===============================================================================
+  11) SOUND + TREE CRUSH
+===============================================================================
+*/
+const crushSound = new Audio("crush.wav");
+crushSound.crossOrigin = "anonymous";
+
+function crushTreesUnderPlayer(p) {
+  const now = Date.now();
+  for (let tree of trees) {
+    if (tree.crushedTime) {
+      if (now > tree.crushedTime + tree.respawnDelay) {
+        tree.crushedTime = null;
+      }
+      continue;
+    }
+    const dx = p.x - tree.x;
+    const dy = p.y - tree.y;
+    const dist = Math.sqrt(dx*dx + dy*dy);
+    if (dist < 10) {
+      tree.crushedTime = now;
+      crushSound.currentTime = 0;
+      crushSound.play().catch(err => console.warn("Sound blocked:", err));
+    }
+  }
+}
+
+/*
+===============================================================================
+  12) DRAWING FUNCTIONS (PLAYERS, PORTRAIT)
+===============================================================================
+*/
+function drawOnePlayer(pObj, showLabel) {
+  ctx.beginPath();
+  ctx.arc(pObj.x, pObj.y, pObj.size, 0, 2*Math.PI);
+  ctx.fillStyle = pObj.color;
+  ctx.fill();
+
+  if (showLabel && pObj.name) {
+    ctx.fillStyle = "white";
+    ctx.font = "12px sans-serif"; // Font size remains 12px
+    const textWidth = ctx.measureText(pObj.name).width;
+    ctx.fillText(pObj.name, pObj.x - textWidth/2, pObj.y - pObj.size - 3);
+  }
+}
+
+// Portrait
+const portraitCanvas = document.getElementById("portraitCanvas");
+const portraitCtx = portraitCanvas.getContext("2d");
+drawPortraitFace(portraitCtx);
+
+function drawPortraitFace(pCtx) {
+  pCtx.clearRect(0, 0, portraitCanvas.width, portraitCanvas.height);
+  const cx = portraitCanvas.width / 2;
+  const cy = portraitCanvas.height / 2;
+
+  // Face circle
+  pCtx.beginPath();
+  pCtx.arc(cx, cy, 25, 0, 2*Math.PI);
+  pCtx.fillStyle = "#f2d9b2";
+  pCtx.fill();
+  pCtx.strokeStyle = "#000";
+  pCtx.stroke();
+
+  // Eyes
+  pCtx.fillStyle = "#000";
+  pCtx.beginPath();
+  pCtx.arc(cx - 8, cy - 5, 3, 0, 2*Math.PI);
+  pCtx.fill();
+  pCtx.beginPath();
+  pCtx.arc(cx + 8, cy - 5, 3, 0, 2*Math.PI);
+  pCtx.fill();
+
+  // Smile
+  pCtx.beginPath();
+  pCtx.arc(cx, cy + 5, 8, 0, Math.PI, false);
+  pCtx.strokeStyle = "#000";
+  pCtx.stroke();
+}
+
+/* ==========================================================================
+   Utilities
+========================================================================== */
+function randomColor() {
+  const hue = Math.floor(Math.random() * 360);
+  return `hsl(${hue},70%,50%)`;
+}
+function randomRange(min, max) {
+  return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+</script>
+</body>
+</html>
