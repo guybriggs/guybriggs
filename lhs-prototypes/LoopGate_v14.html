@@ -1,0 +1,733 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <title>JavaScript Polygon Loop, Squares, Star, Hearts, and Money Counter</title>
+  <style>
+    /* Basic styling to center the canvas and UI on the page */
+    body {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      margin: 0;
+      padding: 0;
+    }
+
+    canvas {
+      border: 1px solid black;
+      margin-top: 20px;
+    }
+
+    .controls {
+      margin-top: 20px;
+    }
+
+    .buttons {
+      margin-top: 20px;
+    }
+  </style>
+</head>
+<body>
+  
+  <!-- Slider to control the speed of the circles -->
+  <div class="controls">
+    <label for="speedSlider">Circle Speed: </label>
+    <input type="range" id="speedSlider" min="1" max="10" value="3" />
+  </div>
+  
+  <!-- Our canvas where we'll draw everything -->
+  <canvas id="gameCanvas" width="1200" height="800"></canvas>
+
+  <!-- Buttons at the bottom -->
+  <div class="buttons">
+    <button id="restartBtn">Restart Game</button>
+    <button id="addHeartsBtn">Add More Hearts</button>
+  </div>
+
+  <script>
+    /****************************************
+     * 1. SETUP: CANVAS, CTX, SPEED SLIDER
+     ****************************************/
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const speedSlider = document.getElementById('speedSlider');
+
+    // Buttons
+    const restartBtn = document.getElementById('restartBtn');
+    const addHeartsBtn = document.getElementById('addHeartsBtn');
+
+    restartBtn.addEventListener('click', () => {
+      resetGame();
+    });
+    addHeartsBtn.addEventListener('click', () => {
+      addMoreHearts();
+    });
+
+    /****************************************
+     * 2. MONEY COUNTER (OPTIONAL)
+     ****************************************/
+    let money = 0;  // starts at $0
+
+    /****************************************
+     * 3. ROAD / POLYGON LOOP
+     ****************************************/
+    const loopPoints = [
+      { x: 300,  y: 150 },
+      { x: 900,  y: 150 },
+      { x: 1050, y: 400 },
+      { x: 900,  y: 650 },
+      { x: 300,  y: 650 },
+      { x: 150,  y: 400 }
+    ];
+
+    let segmentLengths = [];
+    let totalLength = 0;
+
+    // Distance helper
+    function dist(p1, p2) {
+      return Math.sqrt((p2.x - p1.x)**2 + (p2.y - p1.y)**2);
+    }
+
+    // Compute total polygon length
+    function computePolygonLengths() {
+      segmentLengths = [];
+      totalLength = 0;
+      for (let i = 0; i < loopPoints.length; i++) {
+        const current = loopPoints[i];
+        const next = loopPoints[(i + 1) % loopPoints.length];
+        const length = dist(current, next);
+        segmentLengths.push(length);
+        totalLength += length;
+      }
+    }
+
+    // Convert distance -> (x,y) on polygon
+    function getPositionAtDistance(d) {
+      d = d % totalLength;
+      for (let i = 0; i < loopPoints.length; i++) {
+        let segLen = segmentLengths[i];
+        if (d <= segLen) {
+          const start = loopPoints[i];
+          const end = loopPoints[(i + 1) % loopPoints.length];
+          const ratio = d / segLen;
+          const x = start.x + (end.x - start.x) * ratio;
+          const y = start.y + (end.y - start.y) * ratio;
+          return { x, y };
+        } else {
+          d -= segLen;
+        }
+      }
+      return loopPoints[loopPoints.length - 1];
+    }
+
+    // Draw polygon loop
+    function drawLoop() {
+      ctx.beginPath();
+      ctx.moveTo(loopPoints[0].x, loopPoints[0].y);
+      for (let i = 1; i < loopPoints.length; i++) {
+        ctx.lineTo(loopPoints[i].x, loopPoints[i].y);
+      }
+      ctx.closePath();
+      ctx.strokeStyle = 'black';
+      ctx.lineWidth = 3;
+      ctx.stroke();
+    }
+
+    // Distance from point to line segment
+    function distPointToSegment(px, py, x1, y1, x2, y2) {
+      const vx = px - x1;
+      const vy = py - y1;
+      const ux = x2 - x1;
+      const uy = y2 - y1;
+      const segLen2 = ux*ux + uy*uy;
+      if (segLen2 === 0) {
+        return dist({x:px,y:py}, {x:x1,y:y1});
+      }
+      let t = (vx*ux + vy*uy) / segLen2;
+      t = Math.max(0, Math.min(1, t));
+      const cx = x1 + t * ux;
+      const cy = y1 + t * uy;
+      return dist({x:px,y:py}, {x:cx,y:cy});
+    }
+
+    // Is point near polygon
+    function isPointCloseToPolygon(px, py, minDist) {
+      for (let i = 0; i < loopPoints.length; i++) {
+        const p1 = loopPoints[i];
+        const p2 = loopPoints[(i + 1) % loopPoints.length];
+        const d = distPointToSegment(px, py, p1.x, p1.y, p2.x, p2.y);
+        if (d < minDist) {
+          return true;
+        }
+      }
+      return false;
+    }
+
+    // Get actual nearest point on polygon
+    function getClosestPointOnSegment(px, py, x1, y1, x2, y2) {
+      const ux = x2 - x1;
+      const uy = y2 - y1;
+      const segLen2 = ux*ux + uy*uy;
+      if (segLen2 === 0) {
+        return { x: x1, y: y1 };
+      }
+      const vx = px - x1;
+      const vy = py - y1;
+      let t = (vx*ux + vy*uy) / segLen2;
+      t = Math.max(0, Math.min(1, t));
+      return { x: x1 + t*ux, y: y1 + t*uy };
+    }
+
+    function getNearestPointOnPolygon(px, py) {
+      let bestDist = Infinity;
+      let bestPoint = { x: px, y: py };
+      for (let i = 0; i < loopPoints.length; i++) {
+        const p1 = loopPoints[i];
+        const p2 = loopPoints[(i + 1) % loopPoints.length];
+        const cp = getClosestPointOnSegment(px, py, p1.x, p1.y, p2.x, p2.y);
+        const d = dist({x:px,y:py}, cp);
+        if (d < bestDist) {
+          bestDist = d;
+          bestPoint = { x: cp.x, y: cp.y };
+        }
+      }
+      return bestPoint;
+    }
+
+    /****************************************
+     * 4. CIRCLES
+     ****************************************/
+    const circleRadius = 10;  
+    let circles = [];
+    const circleColors = ['blue', 'pink', 'purple', 'orange', 'green', 'grey', 'orange'];
+
+    // 7 circles => 3 red + 4 random
+    function createCircles() {
+      circles = [];
+      // first 3 are red
+      for (let i = 0; i < 3; i++) {
+        circles.push({
+          distanceTraveled: Math.random() * totalLength,
+          radius: circleRadius,
+          color: 'red'
+        });
+      }
+      // next 4 are random
+      for (let i = 0; i < 4; i++) {
+        circles.push({
+          distanceTraveled: Math.random() * totalLength,
+          radius: circleRadius,
+          color: getRandomCircleColor()
+        });
+      }
+    }
+
+    function getRandomCircleColor() {
+      return circleColors[Math.floor(Math.random() * circleColors.length)];
+    }
+
+    // Prevent overlap
+    function fixCircleOverlap() {
+      circles.sort((a, b) => a.distanceTraveled - b.distanceTraveled);
+      for (let i = 0; i < circles.length - 1; i++) {
+        const c1 = circles[i];
+        const c2 = circles[i + 1];
+        const minDist = c1.distanceTraveled + 2 * circleRadius;
+        if (c2.distanceTraveled < minDist) {
+          c2.distanceTraveled = minDist; 
+        }
+      }
+      // wrap-around
+      const last = circles[circles.length - 1];
+      const first = circles[0];
+      const lastMin = last.distanceTraveled + 2 * circleRadius;
+      const firstWrapped = first.distanceTraveled + totalLength;
+      if (firstWrapped < lastMin) {
+        const adjustment = lastMin - firstWrapped;
+        first.distanceTraveled += adjustment; 
+      }
+      circles.sort((a, b) => a.distanceTraveled - b.distanceTraveled);
+    }
+
+    // Move circles
+    function updateCircles() {
+      const speed = parseInt(speedSlider.value, 10);
+      circles.forEach((circle) => {
+        circle.distanceTraveled += speed;
+      });
+      fixCircleOverlap();
+    }
+
+    // Draw circles
+    function drawCircles() {
+      circles.forEach((circle) => {
+        const pos = getPositionAtDistance(circle.distanceTraveled);
+        ctx.beginPath();
+        ctx.arc(pos.x, pos.y, circle.radius, 0, Math.PI * 2);
+        ctx.fillStyle = circle.color;
+        ctx.fill();
+      });
+    }
+
+    /****************************************
+     * 5. SQUARES (INVENTORY STATIONS)
+     ****************************************/
+    const squareSize = 30;
+    // Base squares
+    let baseSquares = [
+      { x: 285,  y: 120,  color: 'blue',   items: 5, isExtra: false },
+      { x: 885,  y: 120,  color: 'pink',   items: 5, isExtra: false },
+      { x: 1035, y: 370,  color: 'purple', items: 5, isExtra: false },
+      { x: 885,  y: 620,  color: 'orange', items: 5, isExtra: false },
+      { x: 285,  y: 620,  color: 'green',  items: 5, isExtra: false },
+      { x: 135,  y: 370,  color: 'grey',   items: 5, isExtra: false }
+    ];
+
+    // We'll store all squares here (including newly created red squares)
+    let squares = [];
+
+    // Draw squares
+    function drawSquares() {
+      squares.forEach((sq) => {
+        ctx.fillStyle = sq.color;
+        ctx.fillRect(sq.x, sq.y, squareSize, squareSize);
+        ctx.fillStyle = 'white';
+        ctx.font = '14px Arial';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(sq.items, sq.x + squareSize / 2, sq.y + squareSize / 2);
+      });
+    }
+
+    // "one item per pass"
+    let collisionStates = [];
+
+    function initCollisionStates() {
+      collisionStates = [];
+      for (let i = 0; i < circles.length; i++) {
+        collisionStates[i] = [];
+        for (let j = 0; j < squares.length; j++) {
+          collisionStates[i][j] = false;
+        }
+      }
+    }
+
+    /****************************************
+     * 6. HEARTS
+     ****************************************/
+    const maxHearts = 15;
+    const heartRadius = 10;
+    let hearts = [];
+
+    function initHearts() {
+      hearts = [];
+      const minDistFromRoad = 80;
+      const maxAttempts = 300;
+      let count = 0;
+      let attempts = 0;
+      while (count < maxHearts && attempts < maxAttempts) {
+        const x = Math.random() * (canvas.width - 2*heartRadius) + heartRadius;
+        const y = Math.random() * (canvas.height - 2*heartRadius) + heartRadius;
+        if (!isPointCloseToPolygon(x, y, minDistFromRoad)) {
+          hearts.push({ x, y, collected: false });
+          count++;
+        }
+        attempts++;
+      }
+    }
+
+    function addMoreHearts() {
+      const heartsToAdd = 5;
+      const minDistFromRoad = 80;
+      const maxAttempts = 100;
+      let count = 0;
+      let attempts = 0;
+      while (count < heartsToAdd && attempts < maxAttempts) {
+        const x = Math.random() * (canvas.width - 2*heartRadius) + heartRadius;
+        const y = Math.random() * (canvas.height - 2*heartRadius) + heartRadius;
+        if (!isPointCloseToPolygon(x, y, minDistFromRoad)) {
+          hearts.push({ x, y, collected: false });
+          count++;
+        }
+        attempts++;
+      }
+    }
+
+    function drawHeart(x, y, size) {
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.fillStyle = 'red';
+      ctx.beginPath();
+      ctx.moveTo(0, size / 4);
+      ctx.quadraticCurveTo(0, 0, -size / 4, 0);
+      ctx.arc(-size / 4, size / 4, size / 4, -Math.PI / 2, Math.PI / 2, true);
+      ctx.arc(size / 4, size / 4, size / 4, -Math.PI / 2, Math.PI / 2, true);
+      ctx.quadraticCurveTo(size / 4, 0, 0, size / 4);
+      ctx.closePath();
+      ctx.fill();
+      ctx.restore();
+    }
+
+    function drawHearts() {
+      hearts.forEach((h) => {
+        if (!h.collected) {
+          drawHeart(h.x, h.y, 20);
+        }
+      });
+    }
+
+    /****************************************
+     * 7. COLLISIONS
+     ****************************************/
+    function checkCircleSquareCollision() {
+      for (let i = 0; i < circles.length; i++) {
+        const circle = circles[i];
+        const cPos = getPositionAtDistance(circle.distanceTraveled);
+
+        for (let j = 0; j < squares.length; j++) {
+          const sq = squares[j];
+          const sqCenterX = sq.x + squareSize / 2;
+          const sqCenterY = sq.y + squareSize / 2;
+          const dCenter = dist({ x: cPos.x, y: cPos.y }, { x: sqCenterX, y: sqCenterY });
+          const passDist = circleRadius + (squareSize / 2);
+
+          const currentlyInside = (dCenter < passDist);
+
+          if (currentlyInside && !collisionStates[i][j]) {
+            // If circle color == sq color => subtract 1 item
+            if (circle.color === sq.color && sq.items > 0) {
+              sq.items -= 1;
+              // If it's an extra red square => add $2 (just an example mechanic)
+              if (sq.isExtra && sq.color === 'red') {
+                money += 2;
+              }
+            }
+            collisionStates[i][j] = true;
+          }
+          if (!currentlyInside) {
+            collisionStates[i][j] = false;
+          }
+        }
+      }
+    }
+
+    function checkStarHeartCollision() {
+      hearts.forEach((h) => {
+        if (!h.collected) {
+          const d = dist({x: star.x, y: star.y}, {x: h.x, y: h.y});
+          const starCollisionRadius = star.isSquare ? (star.squareSize / 2) : star.size;
+          if (d < (starCollisionRadius + heartRadius)) {
+            // star picks the heart => inventory++
+            h.collected = true;
+            star.inventory += 1;
+          }
+        }
+      });
+    }
+
+    /****************************************
+     * 8. STAR (OR SQUARE FORM)
+     ****************************************/
+    const star = {
+      x: 600,
+      y: 400,
+      size: 20,
+      moveSpeed: 4,
+      inventory: 0,
+      isSquare: false,
+      squareSize: 30
+    };
+
+    /*
+      We'll now let the user add UNLIMITED red squares by pressing F.
+      Each time star has >=5 inventory & is near road => create new red square,
+      or if star is near an existing red square => remove that one.
+      We no longer track "only one" extra square with extraSquareActive.
+    */
+
+    // Movement keys
+    let leftPressed = false;
+    let rightPressed = false;
+    let upPressed = false;
+    let downPressed = false;
+
+    // Key listeners
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowLeft')  leftPressed = true;
+      if (e.key === 'ArrowRight') rightPressed = true;
+      if (e.key === 'ArrowUp')    upPressed = true;
+      if (e.key === 'ArrowDown')  downPressed = true;
+
+      // J => star <-> road
+      if (e.key === 'j' || e.key === 'J') {
+        handleTransformKey();
+      }
+
+      // F => create or remove a red square
+      if (e.key === 'f' || e.key === 'F') {
+        handleRedSquareKey();
+      }
+    });
+
+    document.addEventListener('keyup', (e) => {
+      if (e.key === 'ArrowLeft')  leftPressed = false;
+      if (e.key === 'ArrowRight') rightPressed = false;
+      if (e.key === 'ArrowUp')    upPressed = false;
+      if (e.key === 'ArrowDown')  downPressed = false;
+    });
+
+    function handleTransformKey() {
+      // If star not in square form => snap star to road
+      if (!star.isSquare) {
+        const distanceThreshold = 50;
+        if (isPointCloseToPolygon(star.x, star.y, distanceThreshold)) {
+          const nearest = getNearestPointOnPolygon(star.x, star.y);
+          star.x = nearest.x;
+          star.y = nearest.y;
+          star.isSquare = true;
+        }
+      } else {
+        // remove star from road
+        star.isSquare = false;
+      }
+    }
+
+    function handleRedSquareKey() {
+      /*
+        We'll check if star is near any existing red square => remove it
+        otherwise, if star has >=5 inventory & near road => create new red square
+      */
+      // 1) Check if near any existing red square => remove if so
+      for (let i = 0; i < squares.length; i++) {
+        const sq = squares[i];
+        if (sq.color === 'red' && sq.isExtra) {
+          // if star is near that square
+          const sqCenterX = sq.x + squareSize/2;
+          const sqCenterY = sq.y + squareSize/2;
+          const d = dist({ x: star.x, y: star.y }, { x: sqCenterX, y: sqCenterY });
+          if (d < 50) {
+            // remove => star recovers items
+            star.inventory += sq.items;
+            squares.splice(i, 1);
+            initCollisionStates();  // re-init collisions
+            return; // done
+          }
+        }
+      }
+
+      // 2) Otherwise, create a new red square if star>=5 items & near road
+      if (star.inventory >= 5) {
+        const distanceThreshold = 50;
+        if (isPointCloseToPolygon(star.x, star.y, distanceThreshold)) {
+          const nearest = getNearestPointOnPolygon(star.x, star.y);
+          const newSq = {
+            x: nearest.x - squareSize/2,
+            y: nearest.y - squareSize/2,
+            color: 'red',
+            items: 5,
+            isExtra: true
+          };
+          // subtract 5 from star
+          star.inventory -= 5;
+          squares.push(newSq);
+          initCollisionStates(); // new square => re-init collisions
+        }
+      }
+    }
+
+    function updateStar() {
+      // if star is not in square form => can move freely
+      if (!star.isSquare) {
+        if (leftPressed)  star.x -= star.moveSpeed;
+        if (rightPressed) star.x += star.moveSpeed;
+        if (upPressed)    star.y -= star.moveSpeed;
+        if (downPressed)  star.y += star.moveSpeed;
+      }
+      // boundaries
+      if (star.x < 0) star.x = 0;
+      if (star.x > canvas.width)  star.x = canvas.width;
+      if (star.y < 0) star.y = 0;
+      if (star.y > canvas.height) star.y = canvas.height;
+    }
+
+    function drawStarOrSquare() {
+      if (!star.isSquare) {
+        // star shape
+        drawStar(star.x, star.y, 5, star.size, star.size / 2, 'red');
+      } else {
+        // star is a red square
+        const half = star.squareSize / 2;
+        ctx.fillStyle = 'red';
+        ctx.fillRect(star.x - half, star.y - half, star.squareSize, star.squareSize);
+        // show star's inventory on top
+        ctx.fillStyle = 'black';
+        ctx.font = '14px Arial';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(star.inventory, star.x, star.y);
+      }
+    }
+
+    function drawStar(cx, cy, spikes, outerRadius, innerRadius, color) {
+      let rot = Math.PI / 2 * 3;
+      let x = cx;
+      let y = cy;
+      let step = Math.PI / spikes;
+
+      ctx.beginPath();
+      ctx.moveTo(cx, cy - outerRadius);
+      for (let i = 0; i < spikes; i++) {
+        x = cx + Math.cos(rot) * outerRadius;
+        y = cy + Math.sin(rot) * outerRadius;
+        ctx.lineTo(x, y);
+        rot += step;
+
+        x = cx + Math.cos(rot) * innerRadius;
+        y = cy + Math.sin(rot) * innerRadius;
+        ctx.lineTo(x, y);
+        rot += step;
+      }
+      ctx.lineTo(cx, cy - outerRadius);
+      ctx.closePath();
+      ctx.fillStyle = color;
+      ctx.fill();
+
+      // star's inventory in center
+      ctx.fillStyle = 'black';
+      ctx.font = '14px Arial';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(star.inventory, cx, cy);
+    }
+
+    /****************************************
+     * 9. DRAW MONEY COUNTER (OPTIONAL)
+     ****************************************/
+    function drawMoneyCounter() {
+      // top-left corner money
+      ctx.fillStyle = 'lightgrey';
+      ctx.fillRect(10, 10, 120, 30);
+
+      ctx.fillStyle = 'black';
+      ctx.font = '16px Arial';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(`Money: $${money}`, 15, 25);
+    }
+
+    /****************************************
+     * TUTORIAL TEXT (BOTTOM-LEFT CORNER)
+     ****************************************/
+    function drawTutorial() {
+      // We'll place a small overlay at the bottom-left
+      const textLines = [
+        "Collect berries, when you have 5 berries you can",
+        "add a firm using F or yourself to the road using J.",
+        "Run out of stock? You can leave the line by going",
+        "near your firm and pressing the F Key. Pressing the",
+        "J key again will remove yourself from the road."
+      ];
+
+      const tutorialWidth = 400;
+      const tutorialHeight = 90; // enough for 5 lines
+      const x = 10;
+      const y = canvas.height - tutorialHeight - 10; // bottom-left
+      ctx.fillStyle = "rgba(200,200,200,0.8)";
+      ctx.fillRect(x, y, tutorialWidth, tutorialHeight);
+
+      // draw text lines
+      ctx.fillStyle = "black";
+      ctx.font = "14px Arial";
+      let lineY = y + 20;
+      textLines.forEach(line => {
+        ctx.fillText(line, x + 10, lineY);
+        lineY += 16; // line spacing
+      });
+    }
+
+    /****************************************
+     * 10. MAIN UPDATE LOOP
+     ****************************************/
+    function gameLoop() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      // 1) Draw the polygon loop (road)
+      drawLoop();
+
+      // 2) Draw squares
+      drawSquares();
+
+      // 3) Draw hearts
+      drawHearts();
+
+      // 4) Circles: update, draw
+      updateCircles();
+      drawCircles();
+
+      // 5) Collisions
+      checkCircleSquareCollision();
+      checkStarHeartCollision();
+
+      // 6) Star: update, draw
+      updateStar();
+      drawStarOrSquare();
+
+      // 7) Draw money (optional)
+      drawMoneyCounter();
+
+      // 8) Draw tutorial text in bottom-left
+      drawTutorial();
+
+      requestAnimationFrame(gameLoop);
+    }
+
+    /****************************************
+     * 11. RESET & INIT
+     ****************************************/
+    function initGame() {
+      // compute polygon lengths
+      computePolygonLengths();
+
+      // create initial circles
+      createCircles();
+
+      // create squares from base, reset items
+      squares = [];
+      baseSquares.forEach(bsq => {
+        squares.push({
+          x: bsq.x,
+          y: bsq.y,
+          color: bsq.color,
+          items: 5,
+          isExtra: false
+        });
+      });
+
+      // hearts
+      initHearts();
+
+      // star
+      star.x = 600;
+      star.y = 400;
+      star.inventory = 0;
+      star.isSquare = false;
+
+      // money
+      money = 0;
+
+      // collisions
+      initCollisionStates();
+    }
+
+    function resetGame() {
+      initGame();
+    }
+
+    /****************************************
+     * 12. START
+     ****************************************/
+    initGame();
+    requestAnimationFrame(gameLoop);
+  </script>
+</body>
+</html>
