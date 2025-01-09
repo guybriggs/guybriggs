@@ -1,0 +1,1002 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Fog of War with Carrot, Fish, and Coconut Markets</title>
+  <style>
+    body {
+      margin: 0;
+      overflow: hidden; /* Prevent scrollbars when player moves */
+      font-family: Arial, sans-serif;
+      background-color: #222;
+    }
+    canvas {
+      background-color: #19b34d;
+      display: block;
+      margin: 0 auto;
+      position: absolute;
+      top: 0;
+      left: 0;
+    }
+    /* Main Interaction Options Container */
+    #interactionOptions {
+      position: absolute;
+      display: none;
+      background-color: rgba(0, 0, 0, 0.8);
+      padding: 10px;
+      border-radius: 5px;
+      z-index: 10;
+    }
+    .interaction-button {
+      display: block;
+      margin: 5px 0;
+      padding: 8px 12px;
+      background-color: #555;
+      color: #fff;
+      border: none;
+      border-radius: 3px;
+      cursor: pointer;
+      text-align: left;
+      font-size: 16px;
+    }
+    .interaction-button:hover {
+      background-color: #777;
+    }
+    /* Narrative Log at the bottom */
+    #interactionLog {
+      position: absolute;
+      bottom: 10px;
+      left: 50%;
+      transform: translateX(-50%);
+      background-color: rgba(0, 0, 0, 0.8);
+      color: #fff;
+      padding: 15px 20px;
+      border-radius: 5px;
+      max-width: 80%;
+      font-size: 20px;
+      z-index: 10;
+      text-align: center;
+      display: none; /* Initially hidden */
+    }
+    /* Coconut Market Box */
+    #coconutBox {
+      position: absolute;
+      display: none;
+      background-color: rgba(0, 0, 0, 0.8);
+      color: #fff;
+      border-radius: 5px;
+      padding: 10px;
+      max-width: 300px;
+      font-size: 16px;
+      z-index: 20;
+    }
+    .coconut-button {
+      display: block;
+      margin: 5px 0;
+      padding: 8px 12px;
+      background-color: #555;
+      color: #fff;
+      border: none;
+      border-radius: 3px;
+      cursor: pointer;
+      text-align: left;
+      font-size: 16px;
+    }
+    .coconut-button:hover {
+      background-color: #777;
+    }
+    /* Fish Market Box */
+    #fishBox {
+      position: absolute;
+      display: none;
+      background-color: rgba(0, 0, 0, 0.8);
+      color: #fff;
+      border-radius: 5px;
+      padding: 10px;
+      max-width: 300px;
+      font-size: 16px;
+      z-index: 20;
+    }
+    .fish-button {
+      display: block;
+      margin: 5px 0;
+      padding: 8px 12px;
+      background-color: #555;
+      color: #fff;
+      border: none;
+      border-radius: 3px;
+      cursor: pointer;
+      text-align: left;
+      font-size: 16px;
+    }
+    .fish-button:hover {
+      background-color: #777;
+    }
+    /* Carrot Market Box */
+    #carrotBox {
+      position: absolute;
+      display: none;
+      background-color: rgba(0, 0, 0, 0.8);
+      color: #fff;
+      border-radius: 5px;
+      padding: 10px;
+      max-width: 300px;
+      font-size: 16px;
+      z-index: 20;
+    }
+    .carrot-button {
+      display: block;
+      margin: 5px 0;
+      padding: 8px 12px;
+      background-color: #555;
+      color: #fff;
+      border: none;
+      border-radius: 3px;
+      cursor: pointer;
+      text-align: left;
+      font-size: 16px;
+    }
+    .carrot-button:hover {
+      background-color: #777;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="gameCanvas" width="900" height="900"></canvas>
+  
+  <!-- Main Interaction Menu -->
+  <div id="interactionOptions"></div>
+  
+  <!-- Narrative Log -->
+  <div id="interactionLog"></div>
+
+  <!-- Coconut Market Box -->
+  <div id="coconutBox"></div>
+
+  <!-- Fish Market Box -->
+  <div id="fishBox"></div>
+
+  <!-- Carrot Market Box -->
+  <div id="carrotBox"></div>
+  
+  <script>
+    // Grabbing references
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    
+    const interactionContainer = document.getElementById('interactionOptions');
+    const interactionLog = document.getElementById('interactionLog');
+    const coconutBox = document.getElementById('coconutBox');
+    const fishBox = document.getElementById('fishBox');
+    const carrotBox = document.getElementById('carrotBox');
+
+    // Game world size
+    const WORLD_WIDTH = 2000;
+    const WORLD_HEIGHT = 2000;
+    const VIEW_WIDTH = canvas.width;
+    const VIEW_HEIGHT = canvas.height;
+    
+    // Player
+    const PLAYER_RADIUS = 20;
+    const PLAYER_SPEED = 4;
+    const INITIAL_DISCOVERY_RADIUS = 150;
+    
+    // Fog
+    const FOG_RADIUS = 100;
+    const FOG_REMOVAL_THRESHOLD = FOG_RADIUS + PLAYER_RADIUS + 150;
+    
+    // Ground radius
+    const GROUND_RADIUS = 500;
+    
+    // Ground color definitions
+    const groundColors = {
+      beach: '#ffcc99',
+      forest: '#ccff66', // light green
+      grass: '#00cc66',
+      lake: '#70dbdb'
+    };
+    
+    // Some example DnD events
+    const dndEvents = [
+      { event: "A shadow darts between the trees; it's a wolf! What do you do?",
+        outcome: "The wolf lowers its head, its golden eyes meeting yours; it seems willing to trust you." },
+      // ...
+    ];
+    
+    //------------------------------------------------------------------------------------
+    // MARKET STATES
+    //------------------------------------------------------------------------------------
+    // For coconut
+    let coconutMarketOpen = false;
+    let activeCoconutStar = null;
+    
+    // For fish (the star will spin ONLY when fish box is open)
+    let fishMarketOpen = false;
+    let activeFishStar = null;
+    
+    // For carrot
+    let carrotMarketOpen = false;
+    let activeCarrotStar = null;
+
+    // Player object
+    const player = {
+      x: WORLD_WIDTH / 2,
+      y: WORLD_HEIGHT / 2,
+      radius: PLAYER_RADIUS,
+      color: '#FFD700',
+      dx: 0,
+      dy: 0
+    };
+    
+    // Arrays for ground, fog, and interactive objects
+    const groundCircles = [];
+    const fogCircles = [];
+    const interactiveObjects = [];
+    
+    // Normal interactions
+    const interactionOptionsList = [
+      'Examine',
+      'Grab',
+      'Pick up',
+      'Loot',
+      'Pet',
+      'Attack',
+      'Reason',
+      'Throw at'
+    ];
+    
+    //------------------------------------------------------------------------------------
+    // HELPER: Is on light green ground?
+    //------------------------------------------------------------------------------------
+    function isOnLightGreenGround(x, y) {
+      for (let circle of groundCircles) {
+        if (circle.color === '#ccff66') {
+          const dist = Math.hypot(x - circle.x, y - circle.y);
+          if (dist <= circle.radius) {
+            return true;
+          }
+        }
+      }
+      return false;
+    }
+    
+    //------------------------------------------------------------------------------------
+    // UTILS
+    //------------------------------------------------------------------------------------
+    function getRandomInt(min, max) {
+      return Math.floor(Math.random() * (max - min + 1)) + min;
+    }
+    function shuffleArray(array) {
+      for (let i = array.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [array[i], array[j]] = [array[j], array[i]];
+      }
+      return array;
+    }
+    
+    //------------------------------------------------------------------------------------
+    // CLASS: InteractiveObject
+    //------------------------------------------------------------------------------------
+    class InteractiveObject {
+      constructor(x, y, shapeOverride = null) {
+        this.x = x;
+        this.y = y;
+        this.size = (Math.random() * 15 + 10);
+        this.shape = shapeOverride || this.getRandomShape();
+        this.color = this.getRandomColor();
+        this.movement = this.getRandomMovement();
+        this.isHalfBuried = Math.random() < 0.3;
+        this.hoverOffset = 0;
+        this.swayOffset = 0;  
+        
+        // NEW: spinAngle for fish scenario
+        this.spinAngle = 0;
+
+        this.targetX = this.x;
+        this.targetY = this.y;
+        this.speed = Math.random() * 0.5 + 0.5;
+        this.waitTime = 0;
+        
+        // For DnD events
+        this.currentEvent = null;
+        this.currentOutcome = null;
+      }
+      getRandomShape() {
+        const shapes = ['circle', 'square', 'triangle', 'star'];
+        return shapes[getRandomInt(0, shapes.length - 1)];
+      }
+      getRandomColor() {
+        const colors = ['#FF5733', '#33FF57', '#3357FF', '#F333FF', '#FF33A8'];
+        return colors[getRandomInt(0, colors.length - 1)];
+      }
+      getRandomMovement() {
+        const movements = ['static', 'hover', 'randomWalk'];
+        return movements[getRandomInt(0, movements.length - 1)];
+      }
+      
+      // Called each frame
+      update() {
+        // 1) Coconut side-to-side if open
+        if (this.shape === 'star' && coconutMarketOpen && activeCoconutStar === this) {
+          this.swayOffset += 0.04;
+        }
+        // 2) Fish scenario => spin only if fish box is open for this star
+        else if (this.shape === 'star' && fishMarketOpen && activeFishStar === this) {
+          // We increment spinAngle each frame
+          this.spinAngle += 0.1;  // The larger, the faster the spin
+        }
+        else if (this.movement === 'hover') {
+          this.hoverOffset += this.speed * 0.1;
+          this.currentY = this.y + Math.sin(this.hoverOffset) * 3;
+        }
+        else if (this.movement === 'randomWalk') {
+          if (this.waitTime > 0) {
+            this.waitTime -= 1;
+          } else {
+            const dx = this.targetX - this.x;
+            const dy = this.targetY - this.y;
+            const distance = Math.hypot(dx, dy);
+            if (distance > 5) {
+              this.x += (dx / distance) * this.speed;
+              this.y += (dy / distance) * this.speed;
+            } else {
+              const angle = Math.random() * Math.PI * 2;
+              const distOff = Math.random() * 100 + 50;
+              this.targetX = this.x + Math.cos(angle) * distOff;
+              this.targetY = this.y + Math.sin(angle) * distOff;
+              this.targetX = Math.max(this.size, Math.min(WORLD_WIDTH - this.size, this.targetX));
+              this.targetY = Math.max(this.size, Math.min(WORLD_HEIGHT - this.size, this.targetY));
+              this.waitTime = getRandomInt(120, 300);
+            }
+          }
+        }
+      }
+
+      // Draw each frame
+      draw(ctx) {
+        ctx.save();
+        
+        let drawX = this.x;
+        let drawY = this.y;
+        
+        // If coconut scenario => side-to-side
+        if (this.shape === 'star' && coconutMarketOpen && activeCoconutStar === this) {
+          const swayAmplitude = 3;
+          drawX = this.x + Math.sin(this.swayOffset) * swayAmplitude;
+        }
+        // If fish scenario => spin
+        else if (this.shape === 'star' && fishMarketOpen && activeFishStar === this) {
+          // Translate to star center
+          ctx.translate(this.x, this.y);
+          // Rotate by spinAngle
+          ctx.rotate(this.spinAngle);
+          // We'll set drawX, drawY to 0, 0 (since we've translated to the star center)
+          drawX = 0;
+          drawY = 0;
+        }
+        // If hovering
+        else if (this.movement === 'hover') {
+          drawY = this.currentY || this.y;
+        }
+
+        // We'll do the actual shape drawing
+        if (this.shape === 'circle') {
+          ctx.beginPath();
+          ctx.arc(drawX, drawY, this.size, 0, Math.PI * 2);
+          ctx.fillStyle = this.color;
+          ctx.fill();
+          ctx.stroke();
+        }
+        else if (this.shape === 'square') {
+          ctx.beginPath();
+          ctx.rect(drawX - this.size, drawY - this.size, this.size * 2, this.size * 2);
+          ctx.fillStyle = this.color;
+          ctx.fill();
+          ctx.stroke();
+        }
+        else if (this.shape === 'triangle') {
+          ctx.beginPath();
+          ctx.moveTo(drawX, drawY - this.size);
+          ctx.lineTo(drawX - this.size, drawY + this.size);
+          ctx.lineTo(drawX + this.size, drawY + this.size);
+          ctx.closePath();
+          ctx.fillStyle = this.color;
+          ctx.fill();
+          ctx.stroke();
+        }
+        else if (this.shape === 'star') {
+          this.drawStar(ctx, drawX, drawY, this.size, this.color);
+        }
+        
+        // If half-buried => overlay bottom half
+        if (this.isHalfBuried) {
+          ctx.beginPath();
+          if (this.shape === 'circle') {
+            ctx.arc(drawX, drawY, this.size, 0, Math.PI);
+          } else if (this.shape === 'square') {
+            ctx.rect(drawX - this.size, drawY, this.size * 2, this.size * 2);
+          } else if (this.shape === 'triangle') {
+            ctx.moveTo(drawX, drawY);
+            ctx.lineTo(drawX - this.size, drawY + this.size);
+            ctx.lineTo(drawX + this.size, drawY + this.size);
+            ctx.closePath();
+          } else if (this.shape === 'star') {
+            ctx.moveTo(drawX, drawY);
+            ctx.rect(drawX - this.size * 1.2, drawY, this.size * 2.4, this.size * 2);
+          }
+          ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+          ctx.fill();
+        }
+
+        ctx.restore();
+      }
+      
+      // Draw star method
+      drawStar(ctx, centerX, centerY, size, color) {
+        ctx.save();
+        ctx.beginPath();
+        ctx.translate(centerX, centerY);
+        ctx.moveTo(0, -size);
+        for (let i = 0; i < 10; i++) {
+          ctx.rotate(Math.PI / 5);
+          if (i % 2 === 0) {
+            ctx.lineTo(0, -size);
+          } else {
+            ctx.lineTo(0, -size * 0.5);
+          }
+        }
+        ctx.closePath();
+        ctx.fillStyle = color;
+        ctx.fill();
+        ctx.stroke();
+        ctx.restore();
+      }
+      
+      isClicked(worldX, worldY) {
+        const dx = worldX - this.x;
+        const dy = worldY - this.y;
+        const distance = Math.hypot(dx, dy);
+        return distance <= this.size;
+      }
+    }
+    
+    //------------------------------------------------------------------------------------
+    // INIT
+    //------------------------------------------------------------------------------------
+    function initGround() {
+      const numGround = 2000;
+      for (let i = 0; i < numGround; i++) {
+        const radius = Math.random() * GROUND_RADIUS;
+        const x = Math.random() * WORLD_WIDTH;
+        const y = Math.random() * WORLD_HEIGHT;
+        const keys = Object.keys(groundColors);
+        const type = keys[getRandomInt(0, keys.length - 1)];
+        groundCircles.push({ x, y, radius, color: groundColors[type] });
+      }
+    }
+    function initFog() {
+      const numFog = 1000;
+      const fogArea = 300;
+      for (let i = 0; i < numFog; i++) {
+        const angle = Math.random() * Math.PI * 2;
+        const distance = fogArea + Math.random() * 700;
+        const x = player.x + distance * Math.cos(angle);
+        const y = player.y + distance * Math.sin(angle);
+        fogCircles.push({ x, y, radius: FOG_RADIUS });
+      }
+    }
+    function initInteractiveObjects() {
+      const numInteractive = 25;
+      for (let i = 0; i < numInteractive; i++) {
+        const x = Math.random() * WORLD_WIDTH;
+        const y = Math.random() * WORLD_HEIGHT;
+        const obj = new InteractiveObject(x, y);
+        // If star => must be on light green
+        if (obj.shape === 'star') {
+          let attempts = 0;
+          while (!isOnLightGreenGround(obj.x, obj.y) && attempts < 50) {
+            obj.x = Math.random() * WORLD_WIDTH;
+            obj.y = Math.random() * WORLD_HEIGHT;
+            attempts++;
+          }
+          if (!isOnLightGreenGround(obj.x, obj.y)) {
+            continue;
+          }
+        }
+        interactiveObjects.push(obj);
+      }
+    }
+
+    // Keyboard input
+    const keys = {};
+    let lastDirection = 'none';
+    window.addEventListener('keydown', (e) => {
+      keys[e.key] = true;
+      updateLastDirection(e.key);
+    });
+    window.addEventListener('keyup', (e) => {
+      keys[e.key] = false;
+    });
+    function updateLastDirection(key) {
+      switch(key) {
+        case 'ArrowUp':
+        case 'w':
+        case 'W':
+          lastDirection = 'up'; break;
+        case 'ArrowDown':
+        case 's':
+        case 'S':
+          lastDirection = 'down'; break;
+        case 'ArrowLeft':
+        case 'a':
+        case 'A':
+          lastDirection = 'left'; break;
+        case 'ArrowRight':
+        case 'd':
+        case 'D':
+          lastDirection = 'right'; break;
+        default:
+          break;
+      }
+    }
+    function updatePlayer() {
+      player.dx = 0;
+      player.dy = 0;
+      if (keys['ArrowUp']||keys['w']||keys['W']) player.dy = -PLAYER_SPEED;
+      if (keys['ArrowDown']||keys['s']||keys['S']) player.dy = PLAYER_SPEED;
+      if (keys['ArrowLeft']||keys['a']||keys['A']) player.dx = -PLAYER_SPEED;
+      if (keys['ArrowRight']||keys['d']||keys['D']) player.dx = PLAYER_SPEED;
+      
+      if (player.dx!==0||player.dy!==0) {
+        if (player.dy<0 && player.dx===0) lastDirection='up';
+        if (player.dy>0 && player.dx===0) lastDirection='down';
+        if (player.dx<0 && player.dy===0) lastDirection='left';
+        if (player.dx>0 && player.dy===0) lastDirection='right';
+        if (player.dy<0 && player.dx<0) lastDirection='up-left';
+        if (player.dy<0 && player.dx>0) lastDirection='up-right';
+        if (player.dy>0 && player.dx<0) lastDirection='down-left';
+        if (player.dy>0 && player.dx>0) lastDirection='down-right';
+      }
+      
+      player.x += player.dx;
+      player.y += player.dy;
+      player.x = Math.max(player.radius, Math.min(WORLD_WIDTH - player.radius, player.x));
+      player.y = Math.max(player.radius, Math.min(WORLD_HEIGHT - player.radius, player.y));
+    }
+
+    // FOG
+    function generateFogInDirection(direction) {
+      const numNewFog = 50;
+      const fogDistance = 800;
+      const spreadAngle = 30;
+      let baseAngle;
+      switch(direction) {
+        case 'up': baseAngle=-Math.PI/2; break;
+        case 'down': baseAngle=Math.PI/2; break;
+        case 'left': baseAngle=Math.PI; break;
+        case 'right': baseAngle=0; break;
+        case 'up-left': baseAngle=-3*Math.PI/4; break;
+        case 'up-right': baseAngle=-Math.PI/4; break;
+        case 'down-left': baseAngle=3*Math.PI/4; break;
+        case 'down-right':baseAngle=Math.PI/4; break;
+        default: baseAngle=Math.random()*Math.PI*2;
+      }
+      for (let i=0;i<numNewFog;i++){
+        const angleVariation=(Math.random()-0.5)*(spreadAngle*Math.PI/180);
+        const angle=baseAngle+angleVariation;
+        const distance=fogDistance+Math.random()*300;
+        const x=player.x+distance*Math.cos(angle);
+        const y=player.y+distance*Math.sin(angle);
+        if(x>=0&&x<=WORLD_WIDTH&&y>=0&&y<=WORLD_HEIGHT){
+          fogCircles.push({x,y,radius:FOG_RADIUS});
+        }
+      }
+    }
+    function updateFog(){
+      for(let i=fogCircles.length-1;i>=0;i--){
+        const fog=fogCircles[i];
+        const dist=Math.hypot(player.x-fog.x, player.y-fog.y);
+        if(dist<FOG_REMOVAL_THRESHOLD){
+          fogCircles.splice(i,1);
+          generateFogInDirection(lastDirection);
+        }
+      }
+    }
+
+    // Update objects
+    function updateInteractiveObjects(){
+      interactiveObjects.forEach(obj=>obj.update());
+    }
+
+    // Camera
+    function getCameraTransform(){
+      let cameraX=player.x-VIEW_WIDTH/2;
+      let cameraY=player.y-VIEW_HEIGHT/2;
+      cameraX=Math.max(0, Math.min(WORLD_WIDTH-VIEW_WIDTH, cameraX));
+      cameraY=Math.max(0, Math.min(WORLD_HEIGHT-VIEW_HEIGHT, cameraY));
+      return{cameraX,cameraY};
+    }
+
+    // Drawing
+    function draw(){
+      ctx.clearRect(0,0,VIEW_WIDTH,VIEW_HEIGHT);
+      const{cameraX,cameraY}=getCameraTransform();
+      ctx.save();
+      ctx.translate(-cameraX,-cameraY);
+      
+      // Ground
+      groundCircles.forEach(circle=>{
+        ctx.beginPath();
+        if(Math.round(circle.x)%2===0){
+          ctx.arc(circle.x,circle.y,circle.radius/2,0,Math.PI*2);
+        } else {
+          ctx.rect(circle.x,circle.y,circle.radius,circle.radius);
+        }
+        ctx.fillStyle=circle.color;
+        ctx.fill();
+      });
+      // Objects
+      interactiveObjects.forEach(obj=>obj.draw(ctx));
+      // Fog
+      fogCircles.forEach(fog=>{
+        ctx.beginPath();
+        ctx.arc(fog.x,fog.y,fog.radius,0,Math.PI*2);
+        ctx.fillStyle='rgba(255,255,255,0.8)';
+        ctx.fill();
+      });
+      // Optional: discovery circle
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(player.x,player.y,INITIAL_DISCOVERY_RADIUS,0,Math.PI*2);
+      ctx.clip();
+      ctx.restore();
+      
+      ctx.restore(); // end camera
+
+      // Draw player in center
+      ctx.beginPath();
+      ctx.arc(VIEW_WIDTH/2, VIEW_HEIGHT/2, player.radius,0,Math.PI*2);
+      ctx.fillStyle=player.color;
+      ctx.fill();
+      ctx.lineWidth=2;
+      ctx.stroke();
+    }
+
+    // Mouse click => interactions
+    canvas.addEventListener('click',(e)=>{
+      const rect=canvas.getBoundingClientRect();
+      const clickX=e.clientX-rect.left;
+      const clickY=e.clientY-rect.top;
+      const{cameraX,cameraY}=getCameraTransform();
+      const worldX=clickX+cameraX;
+      const worldY=clickY+cameraY;
+
+      for(let i=0;i<interactiveObjects.length;i++){
+        const obj=interactiveObjects[i];
+        if(obj.isClicked(worldX,worldY)){
+          // Star => show market
+          if(obj.shape==='star'){
+            displayEventSentence(
+              "You walk closer to cluster of agents. Ah, this is the market lines! Which market do you want to observe?"
+            );
+            showMarketOptions(clickX,clickY,obj,i);
+          }
+          else{
+            // Non-star => normal DnD
+            if(!obj.currentEvent){
+              const randomIndex=getRandomInt(0,dndEvents.length-1);
+              const selectedEvent=dndEvents[randomIndex];
+              obj.currentEvent=selectedEvent.event;
+              obj.currentOutcome=selectedEvent.outcome;
+              displayEventSentence(obj.currentEvent);
+            }
+            showInteractionOptions(clickX,clickY,obj,i);
+          }
+          break;
+        }
+      }
+    });
+
+    // Show non-star interactions
+    function showInteractionOptions(x,y,obj,index){
+      interactionContainer.innerHTML='';
+      const shuffled=shuffleArray([...interactionOptionsList]);
+      const selected=shuffled.slice(0,3);
+      selected.forEach(option=>{
+        const button=document.createElement('button');
+        button.classList.add('interaction-button');
+        button.textContent=option;
+        button.addEventListener('click',()=>handleInteraction(option,index));
+        interactionContainer.appendChild(button);
+      });
+      positionInteractionContainer(x,y,selected.length);
+    }
+
+    // Show star market subcategories
+    function showMarketOptions(x,y,obj,index){
+      interactionContainer.innerHTML='';
+      // We have Fish, Coconut, Carrot
+      const categories=['Fish','Coconut','Carrot'];
+      categories.forEach(cat=>{
+        const button=document.createElement('button');
+        button.classList.add('interaction-button');
+        button.textContent=cat;
+        button.addEventListener('click',()=>handleMarketInteraction(cat,index,obj));
+        interactionContainer.appendChild(button);
+      });
+      positionInteractionContainer(x,y,categories.length);
+    }
+
+    // Normal interaction for non-star
+    function handleInteraction(option,objIndex){
+      const obj=interactiveObjects[objIndex];
+      if(obj&&obj.currentOutcome){
+        displayOutcomeSentence(obj.currentOutcome);
+        interactiveObjects.splice(objIndex,1);
+      }
+      interactionContainer.style.display='none';
+    }
+
+    //------------------------------------------------------------------------------------
+    // MARKET INTERACTION: Fish, Coconut, Carrot
+    //------------------------------------------------------------------------------------
+    function handleMarketInteraction(category, objIndex, objRef){
+      // FISH => spin star & open fish sub-menu
+      if(category==='Fish'){
+        interactionContainer.style.display='none';
+        fishMarketOpen=true;
+        activeFishStar=objRef;
+
+        displayEventSentence(
+          "In the fish market the scarcity is intensifying. Fewer consumers are even attempting to buy, as prices climb beyond their reach. Producers look panicked, unable to keep up."
+        );
+        
+        showFishMarketBox(objRef,objIndex);
+      }
+      // COCONUT => side-to-side star & open coconut sub-menu
+      else if(category==='Coconut'){
+        interactionContainer.style.display='none';
+        coconutMarketOpen=true;
+        activeCoconutStar=objRef;
+        
+        displayEventSentence(
+          "In the coconut market a steady rhythm of trades continues. Consumers are satisfied, and producers are matching demand effectively. Prices remain stable."
+        );
+
+        const{cameraX,cameraY}=getCameraTransform();
+        const starScreenX=objRef.x-cameraX;
+        const starScreenY=objRef.y-cameraY;
+        coconutBox.style.left=`${starScreenX+20}px`;
+        coconutBox.style.top=`${starScreenY-50}px`;
+        coconutBox.style.display='block';
+        
+        showCoconutMarketBox(objIndex);
+      }
+      // CARROT => open carrot sub-menu
+      else if(category==='Carrot'){
+        interactionContainer.style.display='none';
+        carrotMarketOpen=true;
+        activeCarrotStar=objRef;
+
+        displayEventSentence(
+          "In the carrot market the surplus persists, there is a sandstorm stopping consumers from buying. Farmers still look worried, but some are managing to sell their stock."
+        );
+
+        const{cameraX,cameraY}=getCameraTransform();
+        const starScreenX=objRef.x-cameraX;
+        const starScreenY=objRef.y-cameraY;
+        carrotBox.style.left=`${starScreenX+20}px`;
+        carrotBox.style.top=`${starScreenY-50}px`;
+        carrotBox.style.display='block';
+
+        showCarrotMarketBox(objIndex);
+      }
+      else {
+        // Default fallback
+        displayOutcomeSentence("You gained some item from the star market!");
+        interactiveObjects.splice(objIndex,1);
+        interactionContainer.style.display='none';
+      }
+    }
+
+    //------------------------------------------------------------------------------------
+    // FISH BOX
+    //------------------------------------------------------------------------------------
+    function showFishMarketBox(objRef,objIndex){
+      // Position fishBox near star
+      const{cameraX,cameraY}=getCameraTransform();
+      const starScreenX=objRef.x-cameraX;
+      const starScreenY=objRef.y-cameraY;
+      fishBox.style.left=`${starScreenX+20}px`;
+      fishBox.style.top=`${starScreenY-50}px`;
+      fishBox.style.display='block';
+
+      fishBox.innerHTML='';
+      const instructions=document.createElement('div');
+      instructions.innerHTML=`<p>What do you want to do in the Fish Market?</p>`;
+      fishBox.appendChild(instructions);
+
+      const fishOptions=['Add consumer','Add producer','Leave the market'];
+      fishOptions.forEach(option=>{
+        const btn=document.createElement('button');
+        btn.classList.add('fish-button');
+        btn.textContent=option;
+        btn.addEventListener('click',()=>handleFishChoice(option,objIndex));
+        fishBox.appendChild(btn);
+      });
+    }
+    function handleFishChoice(option,objIndex){
+      if(option==='Add consumer'){
+        displayOutcomeSentence(
+          "You add another consumer. Demand intensifies even more, further driving up prices!"
+        );
+      }
+      else if(option==='Add producer'){
+        displayOutcomeSentence(
+          "You add another producer. Slightly more supply enters the fish market, but demand remains high!"
+        );
+      }
+      else if(option==='Leave the market'){
+        // In fish scenario, we do remove the star
+        interactiveObjects.splice(objIndex,1);
+        displayOutcomeSentence("You leave the fish market, shaken by the volatility.");
+      }
+      
+      fishBox.style.display='none';
+      fishMarketOpen=false;
+      activeFishStar=null;
+    }
+
+    //------------------------------------------------------------------------------------
+    // COCONUT BOX
+    //------------------------------------------------------------------------------------
+    function showCoconutMarketBox(objIndex){
+      coconutBox.innerHTML='';
+      const instructions=document.createElement('div');
+      instructions.innerHTML=`<p>What do you want to do in the Coconut Market?</p>`;
+      coconutBox.appendChild(instructions);
+
+      const coconutOptions=['Add consumer','Add producer','Leave the market'];
+      coconutOptions.forEach(option=>{
+        const btn=document.createElement('button');
+        btn.classList.add('coconut-button');
+        btn.textContent=option;
+        btn.addEventListener('click',()=>handleCoconutChoice(option,objIndex));
+        coconutBox.appendChild(btn);
+      });
+    }
+    function handleCoconutChoice(option,objIndex){
+      if(option==='Add consumer'){
+        displayOutcomeSentence(
+          "You add another consumer. Demand in the coconut market slightly increases!"
+        );
+      }
+      else if(option==='Add producer'){
+        displayOutcomeSentence(
+          "You add another producer. Supply in the coconut market slightly increases!"
+        );
+      }
+      else if(option==='Leave the market'){
+        // Remove star from the game in coconut scenario
+        interactiveObjects.splice(objIndex,1);
+        displayOutcomeSentence("You leave the coconut market, concluding your business here.");
+      }
+
+      coconutBox.style.display='none';
+      coconutMarketOpen=false;
+      activeCoconutStar=null;
+    }
+
+    //------------------------------------------------------------------------------------
+    // CARROT BOX
+    //------------------------------------------------------------------------------------
+    function showCarrotMarketBox(objIndex){
+      carrotBox.innerHTML='';
+      const instructions=document.createElement('div');
+      instructions.innerHTML=`<p>What do you want to do in the Carrot Market?</p>`;
+      carrotBox.appendChild(instructions);
+
+      const carrotOptions=['Add consumer','Add producer','Leave the market'];
+      carrotOptions.forEach(option=>{
+        const btn=document.createElement('button');
+        btn.classList.add('carrot-button');
+        btn.textContent=option;
+        btn.addEventListener('click',()=>handleCarrotChoice(option,objIndex));
+        carrotBox.appendChild(btn);
+      });
+    }
+    function handleCarrotChoice(option,objIndex){
+      if(option==='Add consumer'){
+        displayOutcomeSentence(
+          "You add another consumer to the carrot market. Demand slightly increases despite the sandstorm!"
+        );
+      }
+      else if(option==='Add producer'){
+        displayOutcomeSentence(
+          "You add another producer to the carrot market. Supply grows, but the sandstorm still deters buyers!"
+        );
+      }
+      else if(option==='Leave the market'){
+        // *** CHANGE 1: Star persists => do NOT remove from interactiveObjects
+        displayOutcomeSentence(
+          "You decide to leave the carrot market, but the star remains in the game world."
+        );
+      }
+      
+      carrotBox.style.display='none';
+      carrotMarketOpen=false;
+      activeCarrotStar=null;
+    }
+    
+    // Position the interaction container near click
+    function positionInteractionContainer(x,y,length){
+      const containerWidth=180;
+      const containerHeight=length*50;
+      let posX=x+10; 
+      let posY=y+10;
+      
+      if(posX+containerWidth>window.innerWidth){
+        posX=x-containerWidth-10;
+      }
+      if(posY+containerHeight>window.innerHeight){
+        posY=y-containerHeight-10;
+      }
+      interactionContainer.style.left=`${posX}px`;
+      interactionContainer.style.top=`${posY}px`;
+      interactionContainer.style.display='block';
+    }
+
+    // Display an event sentence
+    function displayEventSentence(sentence){
+      interactionLog.textContent=sentence;
+      interactionLog.style.display='block';
+      // setTimeout(()=>{ 
+      //   interactionLog.style.display='none';
+      // },4000);
+    }
+    // Display an outcome, then hide
+    function displayOutcomeSentence(sentence){
+      interactionLog.textContent=sentence;
+      interactionLog.style.display='block';
+      setTimeout(()=>{
+        interactionLog.textContent='';
+        interactionLog.style.display='none';
+      },5000);
+    }
+
+    // Hide menus if clicking outside
+    window.addEventListener('click',(e)=>{
+      if(!canvas.contains(e.target)&&
+         !interactionContainer.contains(e.target)&&
+         !coconutBox.contains(e.target)&&
+         !fishBox.contains(e.target)&&
+         !carrotBox.contains(e.target)){
+        interactionContainer.style.display='none';
+        coconutBox.style.display='none';
+        fishBox.style.display='none';
+        carrotBox.style.display='none';
+        
+        // Reset all states
+        coconutMarketOpen=false; activeCoconutStar=null;
+        fishMarketOpen=false;    activeFishStar=null;
+        carrotMarketOpen=false;  activeCarrotStar=null;
+      }
+    });
+
+    // MAIN LOOP
+    function gameLoop(){
+      updatePlayer();
+      updateFog();
+      updateInteractiveObjects();
+      draw();
+      requestAnimationFrame(gameLoop);
+    }
+
+    // INIT
+    initGround();
+    initFog();
+    initInteractiveObjects();
+    gameLoop();
+  </script>
+</body>
+</html>
