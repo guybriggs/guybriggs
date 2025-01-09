@@ -1,0 +1,697 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Firms, Consumers, and Moving Hexagons</title>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+    }
+    canvas {
+      display: block;
+      background: #AAFFAA; /* Light green background */
+    }
+    /* Position the buttons at bottom-right */
+    #btnContainer {
+      position: absolute;
+      bottom: 10px;
+      right: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+    }
+    button {
+      font-size: 14px;
+      padding: 5px 10px;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+
+<div id="btnContainer">
+  <button id="btnCarrotFirm">Open Carrot Firm</button>
+  <button id="btnSwordFirm">Open Sword Firm</button>
+</div>
+
+<canvas id="gameCanvas" width="800" height="600"></canvas>
+
+<script>
+// ---------------------------------------------------
+// Canvas & World Setup
+// ---------------------------------------------------
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+
+const VIEW_WIDTH = canvas.width;   
+const VIEW_HEIGHT = canvas.height; 
+
+// A larger "world" area
+const WORLD_WIDTH = 2000;
+const WORLD_HEIGHT = 2000;
+
+// 400 px "no-spawn" zone at top
+const NO_SPAWN_ZONE_HEIGHT = 400;
+
+// ---------------------------------------------------
+// Player Setup & Inventory
+// ---------------------------------------------------
+const player = {
+  x: WORLD_WIDTH / 2,
+  y: WORLD_HEIGHT / 2,
+  radius: 20,
+  speed: 4,
+  color: 'lightblue'
+};
+
+const inventory = {
+  wood: 0,
+  iron: 0,
+  carrots: 0
+};
+
+// Camera offsets
+let cameraX = 0;
+let cameraY = 0;
+
+// ---------------------------------------------------
+// Key Handling
+// ---------------------------------------------------
+const keys = {};
+
+document.addEventListener('keydown', (e) => {
+  keys[e.key] = true;
+
+  // 'W' key = attempt deposit
+  if (e.key === 'w') {
+    tryDeposit();
+  }
+});
+
+document.addEventListener('keyup', (e) => {
+  keys[e.key] = false;
+});
+
+// ---------------------------------------------------
+// HTML Buttons: "Open Carrot Firm" / "Open Sword Firm"
+// ---------------------------------------------------
+let carrotFirmOpen = false;
+let swordFirmOpen = false;
+
+document.getElementById('btnCarrotFirm').addEventListener('click', () => {
+  carrotFirmOpen = true;
+});
+
+document.getElementById('btnSwordFirm').addEventListener('click', () => {
+  swordFirmOpen = true;
+});
+
+// ---------------------------------------------------
+// Utility / Collision Functions
+// ---------------------------------------------------
+function randomSpawnX() {
+  return Math.random() * WORLD_WIDTH;
+}
+
+function randomSpawnY() {
+  // random y >= NO_SPAWN_ZONE_HEIGHT
+  return Math.random() * (WORLD_HEIGHT - NO_SPAWN_ZONE_HEIGHT) + NO_SPAWN_ZONE_HEIGHT;
+}
+
+// Euclidean distance
+function getDistance(x1, y1, x2, y2) {
+  return Math.hypot(x2 - x1, y2 - y1);
+}
+
+// Clamp function
+function clamp(value, minVal, maxVal) {
+  return Math.max(minVal, Math.min(maxVal, value));
+}
+
+/**
+ * Circle-rectangle collision check
+ * circle: (cx,cy,r)
+ * rect: (rx,ry, rw,rh) top-left corner in world coords
+ */
+function circleRectColliding(cx, cy, cr, rx, ry, rw, rh) {
+  const closestX = clamp(cx, rx, rx + rw);
+  const closestY = clamp(cy, ry, ry + rh);
+  const distX = cx - closestX;
+  const distY = cy - closestY;
+  const distSq = distX * distX + distY * distY;
+  return distSq <= (cr * cr);
+}
+
+// ---------------------------------------------------
+// Firms in the Top Beige Region
+// ---------------------------------------------------
+const BUILDING_WIDTH = 80;
+const BUILDING_HEIGHT = 120;
+
+/*
+  Carrot firm (x= center - 300), Sword firm (x= center + 100)
+  Both at y=200 in the top region.
+*/
+const FIRM_BUILDINGS = [
+  {
+    x: WORLD_WIDTH / 2 - 300,
+    y: 200,
+    sign: 'carrot',
+    depositCount: 0
+  },
+  {
+    x: WORLD_WIDTH / 2 + 100,
+    y: 200,
+    sign: 'sword',
+    depositCount: 0
+  }
+];
+
+function drawBuilding(ctx, x, y, signType) {
+  const screenX = x - cameraX;
+  const screenY = y - cameraY;
+  const left = screenX - BUILDING_WIDTH / 2;
+  const top = screenY - BUILDING_HEIGHT;
+
+  // Building rectangle
+  ctx.fillStyle = '#999';
+  ctx.fillRect(left, top, BUILDING_WIDTH, BUILDING_HEIGHT);
+
+  // Door
+  const doorWidth = 20;
+  const doorHeight = 40;
+  const doorX = left + (BUILDING_WIDTH - doorWidth) / 2;
+  const doorY = top + BUILDING_HEIGHT - doorHeight;
+  ctx.fillStyle = 'brown';
+  ctx.fillRect(doorX, doorY, doorWidth, doorHeight);
+
+  // Sign above building
+  const signX = screenX;
+  const signY = top - 20;
+  if (signType === 'carrot') {
+    drawMiniCarrot(ctx, signX, signY);
+  } else {
+    drawMiniSword(ctx, signX, signY);
+  }
+}
+
+function drawMiniCarrot(ctx, screenX, screenY) {
+  ctx.fillStyle = 'orange';
+  ctx.beginPath();
+  ctx.moveTo(screenX, screenY);
+  ctx.lineTo(screenX - 5, screenY - 15);
+  ctx.lineTo(screenX + 5, screenY - 15);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.fillStyle = 'green';
+  ctx.beginPath();
+  ctx.arc(screenX, screenY - 15, 4, 0, 2 * Math.PI);
+  ctx.fill();
+}
+
+function drawMiniSword(ctx, screenX, screenY) {
+  ctx.fillStyle = '#ccc';
+  ctx.beginPath();
+  ctx.moveTo(screenX, screenY);
+  ctx.lineTo(screenX - 3, screenY - 15);
+  ctx.lineTo(screenX + 3, screenY - 15);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.fillStyle = '#664';
+  ctx.fillRect(screenX - 5, screenY - 15, 10, 3);
+}
+
+// ---------------------------------------------------
+// Consumers (Triangles) in the Pink Zone
+//   1-3 "carrot" consumers in top half (y=0..200)
+//   1-3 "sword"  consumers in bottom half (y=200..400)
+// ---------------------------------------------------
+const carrotConsumers = []; // top half
+const swordConsumers = [];  // bottom half
+
+// Randomly choose how many carrot consumers [1..3]
+const numCarrotConsumers = Math.floor(Math.random() * 3) + 1;
+// Randomly choose how many sword consumers [1..3]
+const numSwordConsumers = Math.floor(Math.random() * 3) + 1;
+
+// Pink zone is x=1700..2000
+function randPinkX() {
+  return 1700 + Math.random() * 300; // 1700..2000
+}
+
+// Carrot (top half) y=0..200
+for (let i = 0; i < numCarrotConsumers; i++) {
+  carrotConsumers.push({
+    x: randPinkX(),
+    y: Math.random() * 200,  // 0..200
+    isActive: true,
+    type: 'carrot'
+  });
+}
+
+// Sword (bottom half) y=200..400
+for (let i = 0; i < numSwordConsumers; i++) {
+  swordConsumers.push({
+    x: randPinkX(),
+    y: 200 + Math.random() * 200, // 200..400
+    isActive: true,
+    type: 'sword'
+  });
+}
+
+/**
+ * Draw a triangle "consumer."
+ * We'll make an upright triangle with a certain color.
+ */
+function drawConsumerTriangle(ctx, consumer) {
+  const { x, y, type } = consumer;
+  if (!consumer.isActive) return; // skip inactive
+
+  const screenX = x - cameraX;
+  const screenY = y - cameraY;
+
+  ctx.fillStyle = (type === 'carrot') ? 'orange' : 'gray';
+
+  ctx.beginPath();
+  ctx.moveTo(screenX, screenY - 15);   // top
+  ctx.lineTo(screenX - 10, screenY + 15); // bottom left
+  ctx.lineTo(screenX + 10, screenY + 15); // bottom right
+  ctx.closePath();
+  ctx.fill();
+}
+
+// ---------------------------------------------------
+// Deposited Hex Items (markers after deposit)
+// We add extra fields for motion (target consumer, etc.)
+// ---------------------------------------------------
+const depositedHexes = [];
+
+function drawHex(ctx, hex) {
+  if (!hex.isActive) return; // skip inactive hex
+
+  const screenX = hex.x - cameraX;
+  const screenY = hex.y - cameraY;
+
+  ctx.fillStyle = hex.color;
+  ctx.beginPath();
+  for (let i = 0; i < 6; i++) {
+    const angle = (Math.PI / 3) * i; // each 60 degrees
+    const px = screenX + hex.radius * Math.cos(angle);
+    const py = screenY + hex.radius * Math.sin(angle);
+    if (i === 0) {
+      ctx.moveTo(px, py);
+    } else {
+      ctx.lineTo(px, py);
+    }
+  }
+  ctx.closePath();
+  ctx.fill();
+}
+
+/**
+ * Spawn a hex marker near the building.
+ * We'll give each hex some default motion fields (null).
+ */
+function spawnHexMarker(firm, color) {
+  // We'll place them to the right (x+50) and line them vertically
+  const depositIndex = firm.depositCount;
+  firm.depositCount++;
+
+  const offsetX = 50;
+  const offsetY = -60 + (depositIndex * 30);
+
+  depositedHexes.push({
+    x: firm.x + offsetX,
+    y: firm.y + offsetY,
+    color,
+    radius: 15,
+    isActive: true,
+    vx: 0,     // velocity X
+    vy: 0,     // velocity Y
+    speed: 2,  // movement speed toward consumer
+    target: null // consumer reference if any
+  });
+}
+
+// ---------------------------------------------------
+// Depositing logic: circle-rectangle collision
+// ---------------------------------------------------
+function tryDeposit() {
+  for (const firm of FIRM_BUILDINGS) {
+    // building bounding box
+    const firmLeft   = firm.x - BUILDING_WIDTH / 2;
+    const firmTop    = firm.y - BUILDING_HEIGHT;
+    const firmWidth  = BUILDING_WIDTH;
+    const firmHeight = BUILDING_HEIGHT;
+
+    if (circleRectColliding(player.x, player.y, player.radius,
+                            firmLeft, firmTop, firmWidth, firmHeight)) {
+      // We are touching this building
+      if (firm.sign === 'carrot') {
+        // deposit 1 carrot if we have it
+        if (inventory.carrots > 0) {
+          inventory.carrots--;
+          spawnHexMarker(firm, 'orange');
+        }
+      } else if (firm.sign === 'sword') {
+        // deposit 1 iron + 1 wood if we have them
+        if (inventory.iron > 0 && inventory.wood > 0) {
+          inventory.iron--;
+          inventory.wood--;
+          spawnHexMarker(firm, 'gray');
+        }
+      }
+      return; // only deposit once per W key press
+    }
+  }
+}
+
+// ---------------------------------------------------
+// Decorative Trees
+// ---------------------------------------------------
+const TREE_COUNT = 15;
+const trees = [];
+for (let i = 0; i < TREE_COUNT; i++) {
+  trees.push({
+    x: randomSpawnX(),
+    y: randomSpawnY()
+  });
+}
+function drawTreeShape(ctx, x, y) {
+  ctx.fillStyle = 'brown';
+  ctx.fillRect(x - 5, y, 10, 20);
+
+  ctx.fillStyle = 'green';
+  ctx.beginPath();
+  ctx.arc(x, y - 10, 10, 0, 2 * Math.PI);
+  ctx.fill();
+
+  ctx.beginPath();
+  ctx.arc(x - 10, y - 5, 10, 0, 2 * Math.PI);
+  ctx.fill();
+
+  ctx.beginPath();
+  ctx.arc(x + 10, y - 5, 10, 0, 2 * Math.PI);
+  ctx.fill();
+}
+
+// ---------------------------------------------------
+// Collectible Items: Carrots, Iron, Wood
+// ---------------------------------------------------
+const CARROT_COUNT = 15;
+const carrots = [];
+for (let i = 0; i < CARROT_COUNT; i++) {
+  carrots.push({ x: randomSpawnX(), y: randomSpawnY() });
+}
+
+function drawCarrotShape(ctx, x, y) {
+  ctx.fillStyle = 'orange';
+  ctx.beginPath();
+  ctx.moveTo(x, y);
+  ctx.lineTo(x - 5, y - 20);
+  ctx.lineTo(x + 5, y - 20);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.fillStyle = 'green';
+  ctx.beginPath();
+  ctx.arc(x, y - 20, 5, 0, 2 * Math.PI);
+  ctx.fill();
+}
+
+const IRON_COUNT = 15;
+const ironPieces = [];
+for (let i = 0; i < IRON_COUNT; i++) {
+  ironPieces.push({ x: randomSpawnX(), y: randomSpawnY() });
+}
+function drawIronShape(ctx, x, y) {
+  ctx.fillStyle = 'gray';
+  ctx.fillRect(x - 7, y - 7, 14, 14);
+}
+
+const WOOD_COUNT = 15;
+const woodPieces = [];
+for (let i = 0; i < WOOD_COUNT; i++) {
+  woodPieces.push({ x: randomSpawnX(), y: randomSpawnY() });
+}
+function drawWoodShape(ctx, x, y) {
+  ctx.fillStyle = '#8B4513';
+  ctx.fillRect(x - 7, y - 7, 14, 14);
+}
+
+// ---------------------------------------------------
+// Update & Draw Loop
+// ---------------------------------------------------
+function update() {
+  // Player movement (arrow keys)
+  if (keys['ArrowUp'])    { player.y -= player.speed; }
+  if (keys['ArrowDown'])  { player.y += player.speed; }
+  if (keys['ArrowLeft'])  { player.x -= player.speed; }
+  if (keys['ArrowRight']) { player.x += player.speed; }
+
+  // Clamp player inside world
+  if (player.x < player.radius)                    { player.x = player.radius; }
+  if (player.x > WORLD_WIDTH - player.radius)      { player.x = WORLD_WIDTH - player.radius; }
+  if (player.y < player.radius)                    { player.y = player.radius; }
+  if (player.y > WORLD_HEIGHT - player.radius)     { player.y = WORLD_HEIGHT - player.radius; }
+
+  // Pickups for carrots, iron, wood
+  for (let i = carrots.length - 1; i >= 0; i--) {
+    if (getDistance(player.x, player.y, carrots[i].x, carrots[i].y) < player.radius + 10) {
+      carrots.splice(i, 1);
+      inventory.carrots++;
+    }
+  }
+  for (let i = ironPieces.length - 1; i >= 0; i--) {
+    if (getDistance(player.x, player.y, ironPieces[i].x, ironPieces[i].y) < player.radius + 10) {
+      ironPieces.splice(i, 1);
+      inventory.iron++;
+    }
+  }
+  for (let i = woodPieces.length - 1; i >= 0; i--) {
+    if (getDistance(player.x, player.y, woodPieces[i].x, woodPieces[i].y) < player.radius + 10) {
+      woodPieces.splice(i, 1);
+      inventory.wood++;
+    }
+  }
+
+  // CAMERA
+  cameraX = player.x - VIEW_WIDTH / 2;
+  cameraY = player.y - VIEW_HEIGHT / 2;
+
+  if (cameraX < 0)                          { cameraX = 0; }
+  if (cameraY < 0)                          { cameraY = 0; }
+  if (cameraX > WORLD_WIDTH - VIEW_WIDTH)   { cameraX = WORLD_WIDTH - VIEW_WIDTH; }
+  if (cameraY > WORLD_HEIGHT - VIEW_HEIGHT) { cameraY = WORLD_HEIGHT - VIEW_HEIGHT; }
+
+  // Update hex movement if a firm is "opened"
+  updateHexMovements();
+}
+
+// ---------------------------------------------------
+// Move Hexes Toward Consumers
+// ---------------------------------------------------
+function updateHexMovements() {
+  // If carrotFirmOpen => move orange hexes toward any carrot consumer
+  if (carrotFirmOpen) {
+    moveHexesToConsumers('orange', carrotConsumers);
+    // Once we've started them moving, you could set carrotFirmOpen=false
+    // if you only want them to move once. If you want them to keep going
+    // while the firm is open, leave it as is. We'll do a single trigger:
+    carrotFirmOpen = false;
+  }
+
+  // If swordFirmOpen => move gray hexes toward any sword consumer
+  if (swordFirmOpen) {
+    moveHexesToConsumers('gray', swordConsumers);
+    swordFirmOpen = false;
+  }
+
+  // Step each hex that has a target
+  for (const hex of depositedHexes) {
+    if (!hex.isActive || !hex.target) continue; // skip if no target or inactive
+
+    // Move hex toward its consumer
+    const dx = hex.target.x - hex.x;
+    const dy = hex.target.y - hex.y;
+    const dist = Math.hypot(dx, dy);
+
+    // If close enough, "collide" => remove both
+    if (dist < hex.radius + 15) {
+      // 15 is approximate half-size for the triangle or so
+      hex.isActive = false;
+      hex.target.isActive = false; // consumer done
+      hex.target = null; // done
+      continue;
+    }
+
+    // Otherwise keep moving
+    const nx = dx / dist; // direction x
+    const ny = dy / dist; // direction y
+    hex.x += nx * hex.speed;
+    hex.y += ny * hex.speed;
+  }
+}
+
+/**
+ * Assign each matching color hex a target consumer, if any remain.
+ * We'll choose the first available consumer that is still active.
+ */
+function moveHexesToConsumers(hexColor, consumers) {
+  for (const hex of depositedHexes) {
+    if (!hex.isActive) continue;
+    if (hex.color !== hexColor) continue;
+    if (hex.target) continue; // already assigned
+
+    // find first available consumer
+    const c = consumers.find(c => c.isActive);
+    if (c) {
+      hex.target = c; // lock onto that consumer
+    }
+  }
+}
+
+// ---------------------------------------------------
+// Render
+// ---------------------------------------------------
+function draw() {
+  // Fill entire visible canvas with light green
+  ctx.fillStyle = '#AAFFAA';
+  ctx.fillRect(0, 0, VIEW_WIDTH, VIEW_HEIGHT);
+
+  // Draw top beige region
+  const topOverlapY1 = Math.max(0, cameraY);
+  const topOverlapY2 = Math.min(400, cameraY + VIEW_HEIGHT);
+  const topOverlapH = topOverlapY2 - topOverlapY1;
+  if (topOverlapH > 0) {
+    const screenY = topOverlapY1 - cameraY;
+    ctx.fillStyle = '#F5F5DC';
+    ctx.fillRect(0, screenY, VIEW_WIDTH, topOverlapH);
+  }
+
+  // Pink zone in top region: x=1700..2000, y=0..400
+  const pinkMinX = 1700, pinkMaxX = 2000;
+  const pinkMinY = 0,    pinkMaxY = 400;
+  const overlapX1 = Math.max(pinkMinX, cameraX);
+  const overlapX2 = Math.min(pinkMaxX, cameraX + VIEW_WIDTH);
+  const overlapY3 = Math.max(pinkMinY, cameraY);
+  const overlapY4 = Math.min(pinkMaxY, cameraY + VIEW_HEIGHT);
+  const overlapW = overlapX2 - overlapX1;
+  const overlapH = overlapY4 - overlapY3;
+  if (overlapW > 0 && overlapH > 0) {
+    const screenX = overlapX1 - cameraX;
+    const screenY = overlapY3 - cameraY;
+    ctx.fillStyle = '#ffcccc'; // light pink
+    ctx.fillRect(screenX, screenY, overlapW, overlapH);
+
+    // horizontal divide at y=200
+    const lineY = 200;
+    if (lineY >= overlapY3 && lineY <= overlapY4) {
+      const lineScreenY = lineY - cameraY;
+      ctx.strokeStyle = '#666';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(screenX, lineScreenY);
+      ctx.lineTo(screenX + overlapW, lineScreenY);
+      ctx.stroke();
+    }
+
+    // labels
+    ctx.fillStyle = 'black';
+    ctx.font = '18px Arial';
+    ctx.textAlign = 'center';
+
+    // top half label
+    const topLabelY = 100;
+    if (topLabelY >= overlapY3 && topLabelY <= overlapY4) {
+      const labelScreenY = topLabelY - cameraY;
+      const labelScreenX = screenX + overlapW / 2;
+      ctx.fillText('CARROT', labelScreenX, labelScreenY);
+    }
+    // bottom half label
+    const bottomLabelY = 300;
+    if (bottomLabelY >= overlapY3 && bottomLabelY <= overlapY4) {
+      const labelScreenY = bottomLabelY - cameraY;
+      const labelScreenX = screenX + overlapW / 2;
+      ctx.fillText('SWORD', labelScreenX, labelScreenY);
+    }
+  }
+
+  // Draw the two firms
+  for (const firm of FIRM_BUILDINGS) {
+    drawBuilding(ctx, firm.x, firm.y, firm.sign);
+  }
+
+  // Draw trees
+  for (const t of trees) {
+    const dx = t.x - cameraX;
+    const dy = t.y - cameraY;
+    drawTreeShape(ctx, dx, dy);
+  }
+
+  // Draw carrots
+  for (const c of carrots) {
+    const dx = c.x - cameraX;
+    const dy = c.y - cameraY;
+    drawCarrotShape(ctx, dx, dy);
+  }
+
+  // Draw iron
+  for (const i of ironPieces) {
+    const dx = i.x - cameraX;
+    const dy = i.y - cameraY;
+    drawIronShape(ctx, dx, dy);
+  }
+
+  // Draw wood
+  for (const w of woodPieces) {
+    const dx = w.x - cameraX;
+    const dy = w.y - cameraY;
+    drawWoodShape(ctx, dx, dy);
+  }
+
+  // Draw consumers (carrot/sword)
+  for (const consumer of carrotConsumers) {
+    drawConsumerTriangle(ctx, consumer);
+  }
+  for (const consumer of swordConsumers) {
+    drawConsumerTriangle(ctx, consumer);
+  }
+
+  // Draw deposited hexes
+  for (const hex of depositedHexes) {
+    drawHex(ctx, hex);
+  }
+
+  // Draw player
+  ctx.beginPath();
+  ctx.arc(player.x - cameraX, player.y - cameraY, player.radius, 0, 2 * Math.PI);
+  ctx.fillStyle = player.color;
+  ctx.fill();
+  ctx.closePath();
+
+  // Bottom-center HUD
+  ctx.font = '16px Arial';
+  ctx.fillStyle = 'black';
+  ctx.textAlign = 'center';
+  const hudText = `Wood: ${inventory.wood}   Iron: ${inventory.iron}   Carrots: ${inventory.carrots}`;
+  ctx.fillText(hudText, VIEW_WIDTH / 2, VIEW_HEIGHT - 10);
+}
+
+// Main game loop
+function gameLoop() {
+  update();
+  draw();
+  requestAnimationFrame(gameLoop);
+}
+
+// Start the loop
+requestAnimationFrame(gameLoop);
+</script>
+
+</body>
+</html>
