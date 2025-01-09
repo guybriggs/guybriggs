@@ -1,0 +1,701 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Firms, Consumers, Snake-Like Hexagons</title>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+    }
+    canvas {
+      display: block;
+      background: #AAFFAA; /* Light green background */
+    }
+    /* Simple buttons in bottom-right corner */
+    #btnContainer {
+      position: absolute;
+      bottom: 10px;
+      right: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+    }
+    button {
+      font-size: 14px;
+      padding: 5px 10px;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+
+<div id="btnContainer">
+  <button id="btnCarrotFirm">Open Carrot Firm</button>
+  <button id="btnSwordFirm">Open Sword Firm</button>
+</div>
+
+<canvas id="gameCanvas" width="800" height="600"></canvas>
+
+<script>
+// ---------------------------------------------------
+// Canvas & Basic Setup
+// ---------------------------------------------------
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+
+const VIEW_WIDTH = canvas.width;
+const VIEW_HEIGHT = canvas.height;
+
+const WORLD_WIDTH = 2000;
+const WORLD_HEIGHT = 2000;
+
+// Top "beige" region = 0..400 in Y => no spawn zone for carrots/iron/wood
+const NO_SPAWN_ZONE_HEIGHT = 400;
+
+// Player
+const player = {
+  x: WORLD_WIDTH / 2,
+  y: WORLD_HEIGHT / 2,
+  radius: 20,
+  speed: 4,
+  color: 'lightblue'
+};
+
+// Inventory
+const inventory = {
+  wood: 0,
+  iron: 0,
+  carrots: 0
+};
+
+// Camera offsets
+let cameraX = 0;
+let cameraY = 0;
+
+// Key states
+const keys = {};
+document.addEventListener('keydown', e => {
+  keys[e.key] = true;
+  // 'W' -> deposit
+  if (e.key === 'w') {
+    tryDeposit();
+  }
+});
+document.addEventListener('keyup', e => {
+  keys[e.key] = false;
+});
+
+// Two HTML buttons controlling movement of hexes
+let carrotFirmOpen = false;
+let swordFirmOpen = false;
+
+document.getElementById('btnCarrotFirm').addEventListener('click', () => {
+  carrotFirmOpen = true;
+});
+document.getElementById('btnSwordFirm').addEventListener('click', () => {
+  swordFirmOpen = true;
+});
+
+// ---------------------------------------------------
+// Utility & Collision
+// ---------------------------------------------------
+function clamp(val, minv, maxv) {
+  return Math.max(minv, Math.min(maxv, val));
+}
+function dist(ax, ay, bx, by) {
+  return Math.hypot(bx - ax, by - ay);
+}
+function circleRectColliding(cx, cy, cr, rx, ry, rw, rh) {
+  const closeX = clamp(cx, rx, rx + rw);
+  const closeY = clamp(cy, ry, ry + rh);
+  return dist(cx, cy, closeX, closeY) <= cr;
+}
+
+// Random spawn outside top zone
+function randomSpawnX() {
+  return Math.random() * WORLD_WIDTH;
+}
+function randomSpawnY() {
+  return (NO_SPAWN_ZONE_HEIGHT + Math.random() * (WORLD_HEIGHT - NO_SPAWN_ZONE_HEIGHT));
+}
+
+// ---------------------------------------------------
+// No-Overlap Spawning for Consumer Triangles
+// ---------------------------------------------------
+function spawnConsumerNoOverlap(list, zoneMinX, zoneMaxX, zoneMinY, zoneMaxY, colorType, count) {
+  const MAX_ATTEMPTS = 50; // limit to avoid infinite loop if it's too crowded
+  const MIN_DIST = 30;     // required spacing between triangles
+
+  let spawned = 0;
+  while (spawned < count) {
+    let attempts = 0;
+    let success = false;
+    while (attempts < MAX_ATTEMPTS) {
+      attempts++;
+      const x = zoneMinX + Math.random() * (zoneMaxX - zoneMinX);
+      const y = zoneMinY + Math.random() * (zoneMaxY - zoneMinY);
+
+      // Check distance to existing
+      let overlap = false;
+      for (const c of list) {
+        if (!c.isActive) continue;
+        if (dist(x, y, c.x, c.y) < MIN_DIST) {
+          overlap = true;
+          break;
+        }
+      }
+      if (!overlap) {
+        list.push({ x, y, isActive: true, type: colorType });
+        success = true;
+        break;
+      }
+    }
+    if (success) spawned++;
+    else break; // can't spawn more
+  }
+}
+
+// ---------------------------------------------------
+// Firms
+// ---------------------------------------------------
+const BUILDING_WIDTH = 80;
+const BUILDING_HEIGHT = 120;
+
+// Carrot & Sword firms
+const FIRM_BUILDINGS = [
+  { x: WORLD_WIDTH/2 - 300, y:200, sign:'carrot', depositCount:0 },
+  { x: WORLD_WIDTH/2 + 100, y:200, sign:'sword',  depositCount:0 }
+];
+
+function drawBuilding(ctx, firm) {
+  const screenX = firm.x - cameraX;
+  const screenY = firm.y - cameraY;
+  const left = screenX - BUILDING_WIDTH/2;
+  const top  = screenY - BUILDING_HEIGHT;
+
+  // main building
+  ctx.fillStyle = '#999';
+  ctx.fillRect(left, top, BUILDING_WIDTH, BUILDING_HEIGHT);
+
+  // door
+  const doorW = 20, doorH = 40;
+  const doorX = left + (BUILDING_WIDTH - doorW)/2;
+  const doorY = top + BUILDING_HEIGHT - doorH;
+  ctx.fillStyle = 'brown';
+  ctx.fillRect(doorX, doorY, doorW, doorH);
+
+  // sign
+  const signX = screenX;
+  const signY = top - 20;
+  if (firm.sign === 'carrot') {
+    drawMiniCarrotSign(signX, signY);
+  } else {
+    drawMiniSwordSign(signX, signY);
+  }
+}
+function drawMiniCarrotSign(x, y) {
+  ctx.fillStyle = 'orange';
+  ctx.beginPath();
+  ctx.moveTo(x, y);
+  ctx.lineTo(x-5, y-15);
+  ctx.lineTo(x+5, y-15);
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle = 'green';
+  ctx.beginPath();
+  ctx.arc(x, y-15, 4, 0, 2*Math.PI);
+  ctx.fill();
+}
+function drawMiniSwordSign(x, y) {
+  ctx.fillStyle = '#ccc';
+  ctx.beginPath();
+  ctx.moveTo(x, y);
+  ctx.lineTo(x-3, y-15);
+  ctx.lineTo(x+3, y-15);
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle = '#664';
+  ctx.fillRect(x-5, y-15, 10, 3);
+}
+
+// ---------------------------------------------------
+// Deposited Hexagons (snake-like movement fields)
+// ---------------------------------------------------
+const depositedHexes = [];
+
+/**
+ * Each color group (orange/gray) will have:
+ *  - a "leader" (the first hex made) which directly moves to the consumer.
+ *  - followers that track the leader's path with a "lag."
+ * 
+ * We'll store a small "history" of positions for each color leader. 
+ * The followers pick an index in that history so they line up behind it.
+ */
+const LEADER_HISTORY_SIZE = 300; // how many positions we store
+const colorGroups = {
+  orange: {
+    leader: null,    // store reference to the "leader" hex
+    history: [],     // array of {x, y} for path
+    followers: []    // all other hexes
+  },
+  gray: {
+    leader: null,
+    history: [],
+    followers: []
+  }
+};
+
+/**
+ * Creates a new hex. If no leader is set for that color, this hex becomes leader.
+ * Otherwise, it becomes a follower.
+ */
+function spawnHexMarker(firm, color) {
+  const offsetX = 50;
+  const offsetY = -60 + firm.depositCount * 30; 
+  firm.depositCount++;
+
+  const hx = firm.x + offsetX;
+  const hy = firm.y + offsetY;
+
+  const newHex = {
+    x: hx, y: hy,
+    color,
+    radius: 15,
+    isActive: true,
+    speed: 2,
+    // For "snake" logic:
+    target: null,        // assigned consumer
+    isLeader: false,
+    followerIndex: 0     // how far behind we are in leader's trail
+  };
+
+  // If we don't have a leader yet, make this one
+  if (!colorGroups[color].leader) {
+    newHex.isLeader = true;
+    colorGroups[color].leader = newHex;
+  } else {
+    // It's a follower
+    newHex.isLeader = false;
+    newHex.followerIndex = colorGroups[color].followers.length * 15 + 20;
+    // For example, each subsequent follower is 15 frames behind the previous
+    colorGroups[color].followers.push(newHex);
+  }
+
+  depositedHexes.push(newHex);
+}
+
+// ---------------------------------------------------
+// Consumers (Triangles) that do not overlap on spawn
+//   We'll keep them in separate arrays for carrot/sword
+// ---------------------------------------------------
+const carrotConsumers = [];
+const swordConsumers = [];
+
+// Pink zone = x=1700..2000, y=0..400
+// top half for carrot: y=0..200
+// bottom half for sword: y=200..400
+const numCarrot = Math.floor(Math.random()*3)+1; // 1..3
+const numSword  = Math.floor(Math.random()*3)+1; // 1..3
+
+spawnConsumerNoOverlap(carrotConsumers, 1700, 2000, 0,   200, 'carrot', numCarrot);
+spawnConsumerNoOverlap(swordConsumers,  1700, 2000, 200, 400, 'sword',  numSword);
+
+/** 
+ * Draw a triangle consumer 
+ */
+function drawConsumerTriangle(cons) {
+  if (!cons.isActive) return;
+  const sx = cons.x - cameraX;
+  const sy = cons.y - cameraY;
+
+  ctx.fillStyle = (cons.type==='carrot') ? 'orange' : 'gray';
+  ctx.beginPath();
+  ctx.moveTo(sx, sy-15);  // top
+  ctx.lineTo(sx-10, sy+15); // bottom-left
+  ctx.lineTo(sx+10, sy+15); // bottom-right
+  ctx.closePath();
+  ctx.fill();
+}
+
+// ---------------------------------------------------
+// Attempt Deposit if Touching Firm
+// ---------------------------------------------------
+function tryDeposit() {
+  for (const firm of FIRM_BUILDINGS) {
+    const left = firm.x - BUILDING_WIDTH/2;
+    const top  = firm.y - BUILDING_HEIGHT;
+    if (circleRectColliding(player.x, player.y, player.radius, left, top, BUILDING_WIDTH, BUILDING_HEIGHT)) {
+      // We are touching
+      if (firm.sign==='carrot') {
+        if (inventory.carrots>0) {
+          inventory.carrots--;
+          spawnHexMarker(firm, 'orange');
+        }
+      } else {
+        // sword => need 1 iron + 1 wood
+        if (inventory.iron>0 && inventory.wood>0) {
+          inventory.iron--;
+          inventory.wood--;
+          spawnHexMarker(firm, 'gray');
+        }
+      }
+      return; // only deposit once per key press
+    }
+  }
+}
+
+// ---------------------------------------------------
+// Trees, Carrots, Iron, Wood
+// ---------------------------------------------------
+const TREE_COUNT = 15;
+const trees = [];
+for (let i=0;i<TREE_COUNT;i++){
+  trees.push({ x: randomSpawnX(), y: randomSpawnY() });
+}
+function drawTreeShape(cx, cy) {
+  ctx.fillStyle='brown';
+  ctx.fillRect(cx-5, cy, 10, 20);
+
+  ctx.fillStyle='green';
+  ctx.beginPath();
+  ctx.arc(cx, cy-10, 10, 0, 2*Math.PI);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.arc(cx-10, cy-5, 10, 0, 2*Math.PI);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.arc(cx+10, cy-5, 10, 0, 2*Math.PI);
+  ctx.fill();
+}
+
+// Carrots
+const CARROT_COUNT=15;
+const carrots=[];
+for(let i=0;i<CARROT_COUNT;i++){
+  carrots.push({x:randomSpawnX(),y:randomSpawnY()});
+}
+function drawCarrotShape(cx, cy) {
+  ctx.fillStyle='orange';
+  ctx.beginPath();
+  ctx.moveTo(cx, cy);
+  ctx.lineTo(cx-5, cy-20);
+  ctx.lineTo(cx+5, cy-20);
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle='green';
+  ctx.beginPath();
+  ctx.arc(cx, cy-20, 5, 0, 2*Math.PI);
+  ctx.fill();
+}
+
+// Iron
+const IRON_COUNT=15;
+const ironPieces=[];
+for(let i=0;i<IRON_COUNT;i++){
+  ironPieces.push({x:randomSpawnX(),y:randomSpawnY()});
+}
+function drawIronShape(cx,cy){
+  ctx.fillStyle='gray';
+  ctx.fillRect(cx-7,cy-7,14,14);
+}
+
+// Wood
+const WOOD_COUNT=15;
+const woodPieces=[];
+for(let i=0;i<WOOD_COUNT;i++){
+  woodPieces.push({x:randomSpawnX(),y:randomSpawnY()});
+}
+function drawWoodShape(cx,cy){
+  ctx.fillStyle='#8B4513';
+  ctx.fillRect(cx-7,cy-7,14,14);
+}
+
+// ---------------------------------------------------
+// Update Function
+// ---------------------------------------------------
+function update() {
+  // Move player
+  if (keys['ArrowUp'])    { player.y-=player.speed; }
+  if (keys['ArrowDown'])  { player.y+=player.speed; }
+  if (keys['ArrowLeft'])  { player.x-=player.speed; }
+  if (keys['ArrowRight']) { player.x+=player.speed; }
+
+  // Clamp
+  player.x=clamp(player.x, player.radius, WORLD_WIDTH - player.radius);
+  player.y=clamp(player.y, player.radius, WORLD_HEIGHT- player.radius);
+
+  // Pickups
+  // Carrots
+  for(let i=carrots.length-1;i>=0;i--){
+    if (dist(player.x,player.y, carrots[i].x, carrots[i].y)< player.radius+10){
+      carrots.splice(i,1);
+      inventory.carrots++;
+    }
+  }
+  // Iron
+  for(let i=ironPieces.length-1;i>=0;i--){
+    if (dist(player.x,player.y, ironPieces[i].x, ironPieces[i].y)< player.radius+10){
+      ironPieces.splice(i,1);
+      inventory.iron++;
+    }
+  }
+  // Wood
+  for(let i=woodPieces.length-1;i>=0;i--){
+    if (dist(player.x,player.y, woodPieces[i].x, woodPieces[i].y)< player.radius+10){
+      woodPieces.splice(i,1);
+      inventory.wood++;
+    }
+  }
+
+  // Camera
+  cameraX=player.x - VIEW_WIDTH/2;
+  cameraY=player.y - VIEW_HEIGHT/2;
+  cameraX=clamp(cameraX, 0, WORLD_WIDTH - VIEW_WIDTH);
+  cameraY=clamp(cameraY, 0, WORLD_HEIGHT- VIEW_HEIGHT);
+
+  // “Open Carrot Firm” => assign all orange hexes to carrot consumers, start “snake” movement
+  if (carrotFirmOpen) {
+    assignTargets('orange', carrotConsumers);
+    carrotFirmOpen=false;
+  }
+  // “Open Sword Firm” => assign all gray hexes to sword consumers
+  if (swordFirmOpen) {
+    assignTargets('gray', swordConsumers);
+    swordFirmOpen=false;
+  }
+
+  // Update the snake-like hex positions
+  updateHexPaths('orange', carrotConsumers);
+  updateHexPaths('gray',   swordConsumers);
+}
+
+// ---------------------------------------------------
+// Assign Targets for a color group’s hexes
+// ---------------------------------------------------
+function assignTargets(hexColor, consumers) {
+  // The “leader” hex is the first created. If no leader, do nothing.
+  // We simply set that leader’s target to the first active consumer
+  // each follower will “snake” behind the leader’s path
+  const group = colorGroups[hexColor];
+  if (!group.leader) return;
+
+  // For each hex in [leader, ...followers], clear old target
+  // Then we pick the first available consumer for the *leader*,
+  // or none if none remain
+  const c = consumers.find(c => c.isActive);
+  if (c) {
+    group.leader.target = c;
+  } else {
+    group.leader.target = null;
+  }
+}
+
+/**
+ * updateHexPaths:
+ *  1) Move the LEADER toward its assigned consumer
+ *  2) record the leader’s position in the group.history
+ *  3) each FOLLOWER picks a position from group.history
+ */
+function updateHexPaths(hexColor, consumers) {
+  const group = colorGroups[hexColor];
+  if (!group.leader) return;
+
+  const leader = group.leader;
+
+  // 1) Move LEADER if it has a target
+  if (leader.isActive && leader.target && leader.target.isActive) {
+    moveLeaderHex(leader);
+    // collision check
+    if (dist(leader.x,leader.y, leader.target.x,leader.target.y)< (leader.radius+15)) {
+      // hex & consumer vanish
+      leader.isActive=false;
+      leader.target.isActive=false;
+      leader.target=null;
+    }
+  }
+
+  // If the leader or consumer is no longer active, leader stops
+  // but we still record the position so followers keep snaking along
+  // (or do something else if you prefer).
+
+  // 2) Add the leader’s position to the history
+  group.history.unshift({x: leader.x, y: leader.y});
+  if (group.history.length>LEADER_HISTORY_SIZE){
+    group.history.pop();
+  }
+
+  // 3) Each follower picks the position from history at “followerIndex”
+  //    and teleports there (like a snake). If out of range, it stays behind the last known pos.
+  for (const follower of group.followers) {
+    if (!follower.isActive) continue;
+    const idx = follower.followerIndex;
+    if (idx<group.history.length) {
+      follower.x = group.history[idx].x;
+      follower.y = group.history[idx].y;
+    } else {
+      // no more history => remain at last known spot
+    }
+    // Collision with consumer check:
+    if (follower.target && follower.target.isActive) {
+      if (dist(follower.x,follower.y, follower.target.x,follower.target.y) < (follower.radius+15)){
+        follower.isActive=false;
+        follower.target.isActive=false;
+      }
+    }
+  }
+}
+
+/** Move the leader directly toward its target at leader.speed */
+function moveLeaderHex(hx) {
+  const dx = hx.target.x - hx.x;
+  const dy = hx.target.y - hx.y;
+  const d = Math.hypot(dx,dy);
+  if (d>0.1) {
+    const nx = dx/d, ny = dy/d;
+    hx.x += nx* hx.speed;
+    hx.y += ny* hx.speed;
+  }
+}
+
+// ---------------------------------------------------
+// Render
+// ---------------------------------------------------
+function draw() {
+  // 1) Clear
+  ctx.fillStyle='#AAFFAA';
+  ctx.fillRect(0,0, VIEW_WIDTH, VIEW_HEIGHT);
+
+  // 2) Beige top region
+  const overY1=Math.max(0, cameraY);
+  const overY2=Math.min(400, cameraY+VIEW_HEIGHT);
+  const h=overY2-overY1;
+  if (h>0){
+    const sy=overY1-cameraY;
+    ctx.fillStyle='#F5F5DC';
+    ctx.fillRect(0, sy, VIEW_WIDTH,h);
+  }
+
+  // 3) Pink zone x=1700..2000, y=0..400
+  const px1=Math.max(1700, cameraX);
+  const px2=Math.min(2000, cameraX+VIEW_WIDTH);
+  const py1=Math.max(0, cameraY);
+  const py2=Math.min(400, cameraY+VIEW_HEIGHT);
+  const pw= px2-px1;
+  const ph= py2-py1;
+  if (pw>0 && ph>0){
+    const sx= px1-cameraX;
+    const sy= py1-cameraY;
+    ctx.fillStyle='#ffcccc';
+    ctx.fillRect(sx,sy,pw,ph);
+
+    // horizontal line at y=200
+    if (200>=py1 && 200<=py2){
+      const ly= 200 - cameraY;
+      ctx.strokeStyle='#666';
+      ctx.lineWidth=2;
+      ctx.beginPath();
+      ctx.moveTo(sx, ly);
+      ctx.lineTo(sx+pw, ly);
+      ctx.stroke();
+    }
+    // labels
+    ctx.fillStyle='black';
+    ctx.font='18px Arial';
+    ctx.textAlign='center';
+    // top half label
+    if (100>=py1 && 100<=py2){
+      ctx.fillText('CARROT', sx+pw/2, 100-cameraY);
+    }
+    // bottom half label
+    if (300>=py1 && 300<=py2){
+      ctx.fillText('SWORD', sx+pw/2, 300-cameraY);
+    }
+  }
+
+  // 4) Draw buildings
+  for (const f of FIRM_BUILDINGS){
+    if (!f) continue;
+    drawBuilding(ctx, f);
+  }
+
+  // 5) Draw trees
+  for (const t of trees){
+    const dx=t.x-cameraX, dy=t.y-cameraY;
+    drawTreeShape(dx,dy);
+  }
+
+  // 6) Draw carrots, iron, wood
+  for (const c of carrots){
+    const dx=c.x-cameraX, dy=c.y-cameraY;
+    drawCarrotShape(dx,dy);
+  }
+  for (const i of ironPieces){
+    const dx=i.x-cameraX, dy=i.y-cameraY;
+    drawIronShape(dx,dy);
+  }
+  for (const w of woodPieces){
+    const dx=w.x-cameraX, dy=w.y-cameraY;
+    drawWoodShape(dx,dy);
+  }
+
+  // 7) Draw consumers
+  for(const cc of carrotConsumers){
+    if(cc.isActive) drawConsumerTriangle(cc);
+  }
+  for(const sc of swordConsumers){
+    if(sc.isActive) drawConsumerTriangle(sc);
+  }
+
+  // 8) Draw hexes
+  for (const h of depositedHexes){
+    if(!h.isActive) continue;
+    drawHex(h);
+  }
+
+  // 9) Draw player
+  ctx.beginPath();
+  ctx.arc(player.x - cameraX, player.y - cameraY, player.radius, 0, 2*Math.PI);
+  ctx.fillStyle=player.color;
+  ctx.fill();
+  ctx.closePath();
+
+  // 10) HUD (bottom-center)
+  ctx.font='16px Arial';
+  ctx.fillStyle='black';
+  ctx.textAlign='center';
+  const txt=`Wood: ${inventory.wood} | Iron: ${inventory.iron} | Carrots: ${inventory.carrots}`;
+  ctx.fillText(txt, VIEW_WIDTH/2, VIEW_HEIGHT-10);
+}
+
+// For each hex, draw it as a hexagon
+function drawHex(hex) {
+  const sx= hex.x - cameraX;
+  const sy= hex.y - cameraY;
+  ctx.fillStyle= hex.color;
+  ctx.beginPath();
+  for(let i=0;i<6;i++){
+    const angle= (Math.PI/3)* i;
+    const px= sx + hex.radius * Math.cos(angle);
+    const py= sy + hex.radius * Math.sin(angle);
+    if(i===0) ctx.moveTo(px,py);
+    else ctx.lineTo(px,py);
+  }
+  ctx.closePath();
+  ctx.fill();
+}
+
+// ---------------------------------------------------
+// Main Game Loop
+// ---------------------------------------------------
+function gameLoop(){
+  update();
+  draw();
+  requestAnimationFrame(gameLoop);
+}
+requestAnimationFrame(gameLoop);
+</script>
+
+</body>
+</html>
