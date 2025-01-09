@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Simplified JavaScript Game Prototype</title>
+  <style>
+    /* Reset default margins and hide overflow */
+    body {
+      margin: 0;
+      overflow: hidden;
+    }
+
+    /* Canvas styling */
+    canvas {
+      display: block;
+      background-color: #000;
+    }
+  </style>
+</head>
+<body>
+  <!-- Canvas Element -->
+  <canvas id="gameCanvas"></canvas>
+
+  <!-- Main Game Script -->
+  <script>
+    // Get the canvas and context
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+
+    // Set canvas to full window size
+    function resizeCanvas() {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+    }
+    resizeCanvas();
+
+    // Handle window resize
+    window.addEventListener('resize', resizeCanvas);
+
+    // Game Variables
+    const tileSize = 64; // Size of each tile in pixels
+    const worldWidth = 100; // Number of tiles horizontally
+    const worldHeight = 100; // Number of tiles vertically
+
+    // Player Object
+    const player = {
+      x: (worldWidth * tileSize) / 2, // Start at the center of the world
+      y: (worldHeight * tileSize) / 2,
+      width: 32,
+      height: 32,
+      speed: 200, // Pixels per second
+      color: 'red',
+    };
+
+    // Camera Object
+    const camera = {
+      x: player.x - canvas.width / 2 + player.width / 2,
+      y: player.y - canvas.height / 2 + player.height / 2,
+    };
+
+    // Input State
+    const keysPressed = {};
+
+    // Time Tracking
+    let lastTime = 0;
+
+    // Biomes Definition
+    const biomes = [
+      { name: 'Ocean', color: '#1E90FF' },
+      { name: 'Beach', color: '#FFFACD' },
+      { name: 'Grassland', color: '#32CD32' },
+      { name: 'Forest', color: '#228B22' },
+      { name: 'Mountain', color: '#A9A9A9' },
+    ];
+
+    // Visibility Grid
+    const visibilityGrid = [];
+
+    // Initialize Visibility Grid
+    function initializeVisibility() {
+      for (let y = 0; y < worldHeight; y++) {
+        const row = [];
+        for (let x = 0; x < worldWidth; x++) {
+          row.push(false); // All tiles are initially hidden
+        }
+        visibilityGrid.push(row);
+      }
+    }
+
+    const visibilityRadius = 3; // Number of tiles around the player to reveal
+
+    // Update Visibility Based on Player Position
+    function updateVisibility() {
+      const playerTileX = Math.floor(player.x / tileSize);
+      const playerTileY = Math.floor(player.y / tileSize);
+
+      for (let y = playerTileY - visibilityRadius; y <= playerTileY + visibilityRadius; y++) {
+        for (let x = playerTileX - visibilityRadius; x <= playerTileX + visibilityRadius; x++) {
+          if (x >= 0 && x < worldWidth && y >= 0 && y < worldHeight) {
+            visibilityGrid[y][x] = true;
+          }
+        }
+      }
+    }
+
+    // Listen for keydown and keyup events
+    window.addEventListener('keydown', (e) => {
+      keysPressed[e.key] = true;
+    });
+
+    window.addEventListener('keyup', (e) => {
+      keysPressed[e.key] = false;
+    });
+
+    // Generate the World with Biomes Based on Distance from Center
+    function generateWorld() {
+      const world = [];
+      const centerX = worldWidth / 2;
+      const centerY = worldHeight / 2;
+      const maxDistance = Math.sqrt(centerX * centerX + centerY * centerY);
+
+      for (let y = 0; y < worldHeight; y++) {
+        const row = [];
+        for (let x = 0; x < worldWidth; x++) {
+          const dx = x - centerX;
+          const dy = y - centerY;
+          const distance = Math.sqrt(dx * dx + dy * dy);
+          const normalizedDistance = distance / maxDistance; // 0 to 1
+
+          let biome;
+          if (normalizedDistance < 0.2) {
+            biome = biomes[4]; // Mountain
+          } else if (normalizedDistance < 0.4) {
+            biome = biomes[3]; // Forest
+          } else if (normalizedDistance < 0.6) {
+            biome = biomes[2]; // Grassland
+          } else if (normalizedDistance < 0.8) {
+            biome = biomes[1]; // Beach
+          } else {
+            biome = biomes[0]; // Ocean
+          }
+
+          row.push(biome);
+        }
+        world.push(row);
+      }
+
+      return world;
+    }
+
+    // Update Function for Game Logic
+    function update(deltaTime) {
+      let moveX = 0;
+      let moveY = 0;
+
+      if (keysPressed['ArrowUp'] || keysPressed['w'] || keysPressed['W']) {
+        moveY = -1;
+      }
+      if (keysPressed['ArrowDown'] || keysPressed['s'] || keysPressed['S']) {
+        moveY = 1;
+      }
+      if (keysPressed['ArrowLeft'] || keysPressed['a'] || keysPressed['A']) {
+        moveX = -1;
+      }
+      if (keysPressed['ArrowRight'] || keysPressed['d'] || keysPressed['D']) {
+        moveX = 1;
+      }
+
+      // Normalize movement to prevent faster diagonal movement
+      if (moveX !== 0 && moveY !== 0) {
+        const diagonal = Math.sqrt(2) / 2;
+        moveX *= diagonal;
+        moveY *= diagonal;
+      }
+
+      // Update player position
+      player.x += moveX * player.speed * deltaTime;
+      player.y += moveY * player.speed * deltaTime;
+
+      // Clamp player within world boundaries
+      player.x = Math.max(player.width / 2, Math.min(player.x, worldWidth * tileSize - player.width / 2));
+      player.y = Math.max(player.height / 2, Math.min(player.y, worldHeight * tileSize - player.height / 2));
+
+      // Update camera to center on player
+      camera.x = player.x - canvas.width / 2 + player.width / 2;
+      camera.y = player.y - canvas.height / 2 + player.height / 2;
+
+      // Clamp camera to world boundaries
+      camera.x = Math.max(0, Math.min(camera.x, worldWidth * tileSize - canvas.width));
+      camera.y = Math.max(0, Math.min(camera.y, worldHeight * tileSize - canvas.height));
+    }
+
+    // Render Function to Draw the World and Player
+    function render(world) {
+      // Clear the canvas
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      // Save the current context state
+      ctx.save();
+
+      // Translate the context based on camera position
+      ctx.translate(-camera.x, -camera.y);
+
+      // Draw the world tiles
+      for (let y = 0; y < worldHeight; y++) {
+        for (let x = 0; x < worldWidth; x++) {
+          const tile = world[y][x];
+          ctx.fillStyle = tile.color;
+          ctx.fillRect(x * tileSize, y * tileSize, tileSize, tileSize);
+        }
+      }
+
+      // Draw the player
+      ctx.fillStyle = player.color;
+      ctx.fillRect(player.x - player.width / 2, player.y - player.height / 2, player.width, player.height);
+
+      // Restore the context to its original state
+      ctx.restore();
+    }
+
+    // Render Fog of War
+    function renderFogOfWar() {
+      ctx.save();
+      ctx.globalAlpha = 0.7; // Adjust opacity as needed
+      ctx.fillStyle = 'black';
+
+      for (let y = 0; y < worldHeight; y++) {
+        for (let x = 0; x < worldWidth; x++) {
+          if (!visibilityGrid[y][x]) {
+            ctx.fillRect(x * tileSize, y * tileSize, tileSize, tileSize);
+          }
+        }
+      }
+
+      ctx.restore();
+    }
+
+    // Main Game Loop
+    function gameLoop(timestamp) {
+      const deltaTime = (timestamp - lastTime) / 1000; // Convert to seconds
+      lastTime = timestamp;
+
+      // Update game state
+      update(deltaTime);
+      updateVisibility();
+
+      // Render the game
+      render(world);
+      renderFogOfWar();
+
+      // Request the next frame
+      requestAnimationFrame(gameLoop);
+    }
+
+    // Initialize the game
+    const world = generateWorld();
+    initializeVisibility();
+
+    // Start the game loop
+    requestAnimationFrame(gameLoop);
+  </script>
+</body>
+</html>

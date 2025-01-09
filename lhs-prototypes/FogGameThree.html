@@ -1,0 +1,633 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Enhanced Fog of War Prototype with Interactive Objects</title>
+  <style>
+    body {
+      margin: 0;
+      overflow: hidden; /* Prevent scrollbars when player moves */
+      font-family: Arial, sans-serif;
+      background-color: #222;
+    }
+    canvas {
+      display: block;
+      margin: 0 auto;
+      background-color: #444; /* Slightly lighter background for better contrast */
+      position: absolute;
+      top: 0;
+      left: 0;
+    }
+    /* Interaction Options Container */
+    #interactionOptions {
+      position: absolute;
+      display: none;
+      background-color: rgba(0, 0, 0, 0.8);
+      padding: 10px;
+      border-radius: 5px;
+      z-index: 10;
+    }
+    /* Interaction Buttons */
+    .interaction-button {
+      display: block;
+      margin: 5px 0;
+      padding: 8px 12px;
+      background-color: #555;
+      color: #fff;
+      border: none;
+      border-radius: 3px;
+      cursor: pointer;
+      text-align: left;
+    }
+    .interaction-button:hover {
+      background-color: #777;
+    }
+    /* Interaction Log */
+    #interactionLog {
+      position: absolute;
+      bottom: 10px;
+      left: 50%;
+      transform: translateX(-50%);
+      background-color: rgba(0, 0, 0, 0.8);
+      color: #fff;
+      padding: 10px;
+      border-radius: 5px;
+      max-width: 80%;
+      font-size: 24px;
+      z-index: 10;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="gameCanvas" width="900" height="900"></canvas>
+  
+  <!-- Interaction Options Container -->
+  <div id="interactionOptions"></div>
+  
+  <!-- Interaction Log -->
+  <div id="interactionLog"></div>
+  
+  <script>
+    // Get the canvas and context
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    
+    // Interaction Options Container
+    const interactionContainer = document.getElementById('interactionOptions');
+    
+    // Interaction Log
+    const interactionLog = document.getElementById('interactionLog');
+    
+    // Game world settings
+    const WORLD_WIDTH = 2000;
+    const WORLD_HEIGHT = 2000;
+    const VIEW_WIDTH = canvas.width;
+    const VIEW_HEIGHT = canvas.height;
+    
+    // Player settings
+    const PLAYER_RADIUS = 20; // Increased radius for better visibility
+    const PLAYER_SPEED = 4;
+    const INITIAL_DISCOVERY_RADIUS = 150;
+    
+    // Fog settings
+    const FOG_RADIUS = 100; // Decreased fog radius to see more fog edges
+    const FOG_REMOVAL_THRESHOLD = FOG_RADIUS + PLAYER_RADIUS + 150; // Distance to remove fog
+    
+    const GROUND_RADIUS = 100;
+    
+    // Colors for ground types
+    const groundColors = {
+      beach: '#ffcc99',
+      forest: '#ccff66',
+      grass: '#00cc66',
+      lake: '#70dbdb'
+    };
+    
+    // Player object
+    const player = {
+      x: WORLD_WIDTH / 2,
+      y: WORLD_HEIGHT / 2,
+      radius: PLAYER_RADIUS,
+      color: '#FFD700',
+      dx: 0,
+      dy: 0
+    };
+    
+    // Arrays to hold ground, fog, and interactive objects
+    const groundCircles = [];
+    const fogCircles = [];
+    const interactiveObjects = [];
+    
+    // Define Interaction Options
+    const interactionOptionsList = [
+      'Examine',
+      'Grab',
+      'Pick up',
+      'Loot',
+      'Pet',
+      'Attack',
+      'Reason',
+      'Throw at'
+    ];
+    
+    // Define Interaction Sentences
+    const interactionSentences = [
+        
+    ];
+    
+    // Utility function to get a random integer between min and max
+    function getRandomInt(min, max) {
+      return Math.floor(Math.random() * (max - min + 1)) + min;
+    }
+    
+    // Utility function to shuffle an array
+    function shuffleArray(array) {
+      for (let i = array.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [array[i], array[j]] = [array[j], array[i]];
+      }
+      return array;
+    }
+    
+    // Interactive Object Class
+    class InteractiveObject {
+      constructor(x, y) {
+        this.x = x;
+        this.y = y;
+        this.size = (Math.random() * 15 + 10); // Half the original size (original was ~20-50)
+        this.type = this.getRandomType();
+        this.color = this.getRandomColor();
+        this.shape = this.getRandomShape();
+        this.movement = this.getRandomMovement();
+        this.isHalfBuried = Math.random() < 0.3; // 30% chance to be half-buried
+        this.hoverOffset = 0;
+        this.hoverDirection = 1;
+        this.targetX = this.x;
+        this.targetY = this.y;
+        this.speed = Math.random() * 0.5 + 0.25; // Slower speed for hover
+        this.waitTime = 0; // Time to wait before next movement
+      }
+      
+      getRandomType() {
+        const types = ['static', 'hover', 'randomWalk'];
+        return types[getRandomInt(0, types.length - 1)];
+      }
+      
+      getRandomColor() {
+        const colors = ['#FF5733', '#33FF57', '#3357FF', '#F333FF', '#FF33A8'];
+        return colors[getRandomInt(0, colors.length - 1)];
+      }
+      
+      getRandomShape() {
+        const shapes = ['circle', 'square', 'triangle'];
+        return shapes[getRandomInt(0, shapes.length - 1)];
+      }
+      
+      getRandomMovement() {
+        const movements = ['static', 'hover', 'randomWalk'];
+        return movements[getRandomInt(0, movements.length - 1)];
+      }
+      
+      update() {
+        if (this.movement === 'hover') {
+          // Slower up and down hover using sine wave
+          this.hoverOffset += this.speed * 0.01; // Further reduced speed for much slower animation
+          this.currentY = this.y + Math.sin(this.hoverOffset) * 1.5; // Hover amplitude of 1.5
+        } else if (this.movement === 'randomWalk') {
+          if (this.waitTime > 0) {
+            this.waitTime -= 1;
+          } else {
+            // Move towards target position
+            const dx = this.targetX - this.x;
+            const dy = this.targetY - this.y;
+            const distance = Math.hypot(dx, dy);
+            if (distance > 5) {
+              this.x += (dx / distance) * this.speed;
+              this.y += (dy / distance) * this.speed;
+            } else {
+              // Set a new target position within a range
+              const angle = Math.random() * Math.PI * 2;
+              const distanceOffset = Math.random() * 100 + 50; // Between 50 and 150
+              this.targetX = this.x + Math.cos(angle) * distanceOffset;
+              this.targetY = this.y + Math.sin(angle) * distanceOffset;
+              // Clamp to world bounds
+              this.targetX = Math.max(this.size, Math.min(WORLD_WIDTH - this.size, this.targetX));
+              this.targetY = Math.max(this.size, Math.min(WORLD_HEIGHT - this.size, this.targetY));
+              // Set wait time (e.g., 120 frames ~ 2 seconds at 60fps)
+              this.waitTime = getRandomInt(120, 300);
+            }
+          }
+        }
+        // Static objects do not move
+      }
+      
+      draw(ctx) {
+        ctx.save();
+        // If hovering, adjust the y-position
+        const drawY = this.movement === 'hover' ? this.currentY : this.y;
+        
+        if (this.shape === 'circle') {
+          ctx.beginPath();
+          ctx.arc(this.x, drawY, this.size, 0, Math.PI * 2);
+          ctx.fillStyle = this.color;
+          ctx.fill();
+        } else if (this.shape === 'square') {
+          ctx.beginPath();
+          ctx.rect(this.x - this.size, drawY - this.size, this.size * 2, this.size * 2);
+          ctx.fillStyle = this.color;
+          ctx.fill();
+        } else if (this.shape === 'triangle') {
+          ctx.beginPath();
+          ctx.moveTo(this.x, drawY - this.size);
+          ctx.lineTo(this.x - this.size, drawY + this.size);
+          ctx.lineTo(this.x + this.size, drawY + this.size);
+          ctx.closePath();
+          ctx.fillStyle = this.color;
+          ctx.fill();
+        }
+        
+        // If half-buried, draw a semi-transparent overlay to simulate burial
+        if (this.isHalfBuried) {
+          ctx.beginPath();
+          if (this.shape === 'circle') {
+            ctx.arc(this.x, drawY, this.size, 0, Math.PI);
+          } else if (this.shape === 'square') {
+            ctx.rect(this.x - this.size, drawY, this.size * 2, this.size * 2);
+          } else if (this.shape === 'triangle') {
+            ctx.moveTo(this.x, drawY);
+            ctx.lineTo(this.x - this.size, drawY + this.size);
+            ctx.lineTo(this.x + this.size, drawY + this.size);
+            ctx.closePath();
+          }
+          ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+          ctx.fill();
+        }
+        
+        ctx.restore();
+      }
+      
+      isClicked(worldX, worldY) {
+        let dx = 0;
+        let dy = 0;
+        if (this.movement === 'hover') {
+          dy = this.currentY - this.y;
+        }
+        dx = worldX - this.x;
+        dy = worldY - (this.movement === 'hover' ? this.currentY : this.y);
+        const distance = Math.hypot(dx, dy);
+        return distance <= this.size;
+      }
+    }
+    
+    // Initialize ground circles
+    function initGround() {
+      const numGround = 2000; // Increased number for denser coverage
+      for (let i = 0; i < numGround; i++) {
+        const radius = Math.random() * GROUND_RADIUS + 50; // Larger radii for ground circles
+        const x = Math.random() * WORLD_WIDTH;
+        const y = Math.random() * WORLD_HEIGHT;
+        const types = Object.keys(groundColors);
+        const type = types[getRandomInt(0, types.length - 1)];
+        groundCircles.push({ x, y, radius, color: groundColors[type] });
+      }
+    }
+    
+    // Initialize fog circles
+    function initFog() {
+      const numFog = 1000; // Increased number for more fog areas
+      const fogArea = 300; // Distance from player to place fog
+      for (let i = 0; i < numFog; i++) {
+        const angle = Math.random() * Math.PI * 2;
+        const distance = fogArea + Math.random() * 700;
+        const x = player.x + distance * Math.cos(angle);
+        const y = player.y + distance * Math.sin(angle);
+        fogCircles.push({ x, y, radius: FOG_RADIUS });
+      }
+    }
+    
+    // Initialize interactive objects
+    function initInteractiveObjects() {
+      const numInteractive = 35; // Halved number of interactive objects
+      for (let i = 0; i < numInteractive; i++) {
+        // Ensure objects are placed within the world bounds
+        const x = Math.random() * WORLD_WIDTH;
+        const y = Math.random() * WORLD_HEIGHT;
+        interactiveObjects.push(new InteractiveObject(x, y));
+      }
+    }
+    
+    // Handle keyboard input
+    const keys = {};
+    let lastDirection = 'none'; // Tracks the last movement direction
+    
+    window.addEventListener('keydown', (e) => {
+      keys[e.key] = true;
+      updateLastDirection(e.key);
+    });
+    window.addEventListener('keyup', (e) => {
+      keys[e.key] = false;
+    });
+    
+    // Update the last movement direction based on key pressed
+    function updateLastDirection(key) {
+      switch(key) {
+        case 'ArrowUp':
+        case 'w':
+        case 'W':
+          lastDirection = 'up';
+          break;
+        case 'ArrowDown':
+        case 's':
+        case 'S':
+          lastDirection = 'down';
+          break;
+        case 'ArrowLeft':
+        case 'a':
+        case 'A':
+          lastDirection = 'left';
+          break;
+        case 'ArrowRight':
+        case 'd':
+        case 'D':
+          lastDirection = 'right';
+          break;
+        default:
+          break;
+      }
+    }
+    
+    // Update player position
+    function updatePlayer() {
+      player.dx = 0;
+      player.dy = 0;
+      
+      if (keys['ArrowUp'] || keys['w'] || keys['W']) player.dy = -PLAYER_SPEED;
+      if (keys['ArrowDown'] || keys['s'] || keys['S']) player.dy = PLAYER_SPEED;
+      if (keys['ArrowLeft'] || keys['a'] || keys['A']) player.dx = -PLAYER_SPEED;
+      if (keys['ArrowRight'] || keys['d'] || keys['D']) player.dx = PLAYER_SPEED;
+      
+      if (player.dx !== 0 || player.dy !== 0) {
+        // Update lastDirection based on movement
+        if (player.dy < 0 && player.dx === 0) lastDirection = 'up';
+        if (player.dy > 0 && player.dx === 0) lastDirection = 'down';
+        if (player.dx < 0 && player.dy === 0) lastDirection = 'left';
+        if (player.dx > 0 && player.dy === 0) lastDirection = 'right';
+        if (player.dy < 0 && player.dx < 0) lastDirection = 'up-left';
+        if (player.dy < 0 && player.dx > 0) lastDirection = 'up-right';
+        if (player.dy > 0 && player.dx < 0) lastDirection = 'down-left';
+        if (player.dy > 0 && player.dx > 0) lastDirection = 'down-right';
+      }
+      
+      player.x += player.dx;
+      player.y += player.dy;
+      
+      // Keep player within world bounds
+      player.x = Math.max(player.radius, Math.min(WORLD_WIDTH - player.radius, player.x));
+      player.y = Math.max(player.radius, Math.min(WORLD_HEIGHT - player.radius, player.y));
+    }
+    
+    // Generate additional fog in the direction of movement
+    function generateFogInDirection(direction) {
+      const numNewFog = 50; // Number of new fog circles to generate
+      const fogDistance = 800; // Distance from the player to start generating new fog
+      const spreadAngle = 30; // Degrees to spread around the main direction
+      
+      // Convert direction to angle in radians
+      let baseAngle;
+      switch(direction) {
+        case 'up':
+          baseAngle = -Math.PI / 2;
+          break;
+        case 'down':
+          baseAngle = Math.PI / 2;
+          break;
+        case 'left':
+          baseAngle = Math.PI;
+          break;
+        case 'right':
+          baseAngle = 0;
+          break;
+        case 'up-left':
+          baseAngle = -3 * Math.PI / 4;
+          break;
+        case 'up-right':
+          baseAngle = -Math.PI / 4;
+          break;
+        case 'down-left':
+          baseAngle = 3 * Math.PI / 4;
+          break;
+        case 'down-right':
+          baseAngle = Math.PI / 4;
+          break;
+        default:
+          baseAngle = Math.random() * Math.PI * 2;
+      }
+      
+      for (let i = 0; i < numNewFog; i++) {
+        // Spread fog around the base angle
+        const angleVariation = (Math.random() - 0.5) * (spreadAngle * Math.PI / 180);
+        const angle = baseAngle + angleVariation;
+        const distance = fogDistance + Math.random() * 300;
+        const x = player.x + distance * Math.cos(angle);
+        const y = player.y + distance * Math.sin(angle);
+        
+        // Ensure fog circles are within world bounds
+        if (x >= 0 && x <= WORLD_WIDTH && y >= 0 && y <= WORLD_HEIGHT) {
+          fogCircles.push({ x, y, radius: FOG_RADIUS });
+        }
+      }
+    }
+    
+    // Check and remove fog circles near the player
+    function updateFog() {
+      for (let i = fogCircles.length - 1; i >= 0; i--) {
+        const fog = fogCircles[i];
+        const dist = Math.hypot(player.x - fog.x, player.y - fog.y);
+        if (dist < FOG_REMOVAL_THRESHOLD) { // Threshold to remove fog
+          fogCircles.splice(i, 1);
+          // Generate additional fog in the direction of movement
+          generateFogInDirection(lastDirection);
+        }
+      }
+    }
+    
+    // Update interactive objects
+    function updateInteractiveObjects() {
+      interactiveObjects.forEach(obj => obj.update());
+    }
+    
+    // Calculate camera position to center the player
+    function getCameraTransform() {
+      let cameraX = player.x - VIEW_WIDTH / 2;
+      let cameraY = player.y - VIEW_HEIGHT / 2;
+      
+      // Clamp camera to world boundaries
+      cameraX = Math.max(0, Math.min(WORLD_WIDTH - VIEW_WIDTH, cameraX));
+      cameraY = Math.max(0, Math.min(WORLD_HEIGHT - VIEW_HEIGHT, cameraY));
+      
+      return { cameraX, cameraY };
+    }
+    
+    // Draw everything with camera transformation
+    function draw() {
+      // Clear the canvas
+      ctx.clearRect(0, 0, VIEW_WIDTH, VIEW_HEIGHT);
+      
+      // Get camera position
+      const { cameraX, cameraY } = getCameraTransform();
+      
+      ctx.save();
+      // Translate the context to simulate camera movement
+      ctx.translate(-cameraX, -cameraY);
+      
+      // Draw ground circles
+      groundCircles.forEach(circle => {
+        ctx.beginPath();
+        ctx.arc(circle.x, circle.y, circle.radius, 0, Math.PI * 2);
+        ctx.fillStyle = circle.color;
+        ctx.fill();
+      });
+      
+      // Draw interactive objects
+      interactiveObjects.forEach(obj => obj.draw(ctx));
+      
+      // Draw fog circles
+      fogCircles.forEach(fog => {
+        ctx.beginPath();
+        ctx.arc(fog.x, fog.y, fog.radius, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
+        ctx.fill();
+      });
+      
+      // Draw initial discovery (uncovered area)
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(player.x, player.y, INITIAL_DISCOVERY_RADIUS, 0, Math.PI * 2);
+      ctx.clip();
+      
+      // Optionally, draw something within the discovery radius
+      // For this prototype, we leave it as is
+      ctx.restore();
+      
+      ctx.restore(); // Restore to original context
+      
+      // Draw player in the center of the screen
+      ctx.beginPath();
+      ctx.arc(VIEW_WIDTH / 2, VIEW_HEIGHT / 2, player.radius, 0, Math.PI * 2);
+      ctx.fillStyle = player.color;
+      ctx.fill();
+    }
+    
+    // Handle canvas clicks for interactions
+    canvas.addEventListener('click', (e) => {
+      // Get canvas bounding rectangle
+      const rect = canvas.getBoundingClientRect();
+      // Calculate click position relative to canvas
+      const clickX = e.clientX - rect.left;
+      const clickY = e.clientY - rect.top;
+      
+      // Transform click coordinates to world coordinates
+      const { cameraX, cameraY } = getCameraTransform();
+      const worldX = clickX + cameraX;
+      const worldY = clickY + cameraY;
+      
+      // Find if any interactive object is clicked
+      for (let i = 0; i < interactiveObjects.length; i++) {
+        const obj = interactiveObjects[i];
+        if (obj.isClicked(worldX, worldY)) {
+          // Show interaction options
+          showInteractionOptions(e.clientX, e.clientY, obj, i);
+
+
+      // Display a random interaction sentence
+      displayInteractionSentence();
+
+          break; // Only handle one object at a time
+        }
+      }
+    });
+    
+    // Show interaction options near the clicked position
+    function showInteractionOptions(x, y, obj, index) {
+      // Clear any existing options
+      interactionContainer.innerHTML = '';
+      
+      // Shuffle and select 3 random interaction options
+      const shuffledOptions = shuffleArray([...interactionOptionsList]);
+      const selectedOptions = shuffledOptions.slice(0, 3);
+      
+      // Create buttons for interaction options
+      selectedOptions.forEach(option => {
+        const button = document.createElement('button');
+        button.classList.add('interaction-button');
+        button.textContent = option;
+        button.addEventListener('click', () => handleInteraction(option, index));
+        interactionContainer.appendChild(button);
+      });
+      
+      // Position the container near the click, with bounds checking
+      const containerWidth = 150;
+      const containerHeight = selectedOptions.length * 40; // Approximate height
+      let posX = x + 10;
+      let posY = y + 10;
+      
+      if (posX + containerWidth > window.innerWidth) {
+        posX = x - containerWidth - 10;
+      }
+      if (posY + containerHeight > window.innerHeight) {
+        posY = y - containerHeight - 10;
+      }
+      
+      interactionContainer.style.left = `${posX}px`;
+      interactionContainer.style.top = `${posY}px`;
+      interactionContainer.style.display = 'block';
+    }
+    
+    // Handle interaction option clicks
+    function handleInteraction(option, objIndex) {
+      console.log(`Selected option "${option}" on object index ${objIndex}`);
+      // Remove the object
+      interactiveObjects.splice(objIndex, 1);
+      // Hide interaction options
+      interactionContainer.style.display = 'none';
+    }
+    
+    // Display a random interaction sentence at the bottom of the screen
+    function displayInteractionSentence() {
+      const randomIndex = getRandomInt(0, interactionSentences.length - 1);
+      const sentence = interactionSentences[randomIndex];
+      interactionLog.textContent = sentence;
+      
+      // Optionally, clear the sentence after a few seconds
+      setTimeout(() => {
+        interactionLog.textContent = '';
+      }, 5000); // Clears after 5 seconds
+    }
+    
+    // Hide interaction options when clicking outside
+    window.addEventListener('click', (e) => {
+      if (!canvas.contains(e.target) && !interactionContainer.contains(e.target)) {
+        interactionContainer.style.display = 'none';
+      }
+    });
+    
+    // Game loop
+    function gameLoop() {
+      updatePlayer();
+      updateFog();
+      updateInteractiveObjects();
+      draw();
+      requestAnimationFrame(gameLoop);
+    }
+    
+    // Initialize the game
+    initGround();
+    initFog();
+    initInteractiveObjects();
+    gameLoop();
+
+    displayInteractionSentence();
+  </script>
+</body>
+</html>
