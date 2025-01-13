@@ -2,7 +2,7 @@
 import { typewriteLine } from '../logic/BubbleLogic.js';
 import { startBubbleSequence, startNextBubble } from '../logic/BubbleLogic.js';
 import { isInFullyEnclosedRegion, houseHasUpgrades, isInGrassland } from '../utils/EnvironmentUtils.js';
-import { randomRange } from '../utils/randomRange.js';
+import { randomRange } from '../utils/RandomRange.js';
 
 export class FollowerSystem {
   constructor() {
