@@ -3,6 +3,7 @@
 import { createAgent } from '../factories/AgentFactory.js';
 import { BehaviorTypes } from '../components/Behavior.js';
 import { EmotionTypes } from '../components/Emotion.js';
+import { Goods, getRandomGood } from '../data/Goods.js';
 
 /**
  * AgentManager is responsible for initializing and managing agents within the world.
@@ -25,6 +26,8 @@ export class AgentManager {
     this.createSittingAgents(3); // 3 sitting agents alone
     this.createGroupSittingAgents(4, 2); // 4 sitting agents in group 2
     this.createEmotionalAgents(); // Additional emotional agents
+    this.createDemandAgents(5); // Create 5 agents with Demand component
+    // Future: this.createSupplyAgents(count); // Method to create supply agents
     //console.log('All agents have been initialized.');
   }
 
@@ -134,4 +137,53 @@ export class AgentManager {
 
     //console.log(`Emotional agents (Angry, Sad, Happy) created.`);
   }
+
+  /**
+   * Creates agents with Demand component.
+   * @param {number} count - Number of agents to create with Demand.
+   */
+  createDemandAgents(count) {
+    for (let i = 0; i < count; i++) {
+      const good = getRandomGood();
+      const reservationPrice = this.getRandomPriceForGood(good);
+      const quantity = 1;
+
+      createAgent(this.world, {
+        behavior: BehaviorTypes.WANDER,
+        emotion: EmotionTypes.NEUTRAL,
+        demand: { good, reservationPrice, quantity }
+      });
+    }
+    //console.log(`${count} agents with Demand component created.`);
+  }
+
+  /**
+   * Generates a random price based on the good type.
+   * @param {string} good - The good type (from Goods).
+   * @returns {number} The price the agent is willing to pay.
+   */
+  getRandomPriceForGood(good) {
+    switch (good) {
+      case Goods.CARROTS:
+        return Math.floor(Math.random() * 10) + 5; // Prices between 5 and 14
+      case Goods.FISH:
+        return Math.floor(Math.random() * 20) + 10; // Prices between 10 and 29
+      default:
+        return 10;
+    }
+  }
+
+  // Future method for creating supply agents
+  // createSupplyAgents(count) {
+  //   for (let i = 0; i < count; i++) {
+  //     const good = getRandomGood();
+  //     const quantity = this.getRandomQuantityForGood(good);
+  // 
+  //     createAgent(this.world, {
+  //       behavior: BehaviorTypes.PRODUCE, // Example behavior
+  //       supply: { good, quantity }
+  //     });
+  //   }
+  //   //console.log(`${count} agents with Supply component created.`);
+  // }
 }

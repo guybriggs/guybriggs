@@ -26,6 +26,7 @@ import { WindArrowSystem } from './modules/systems/WindArrowSystem.js';
 import { WindArrowRenderSystem } from './modules/systems/WindArrowRenderSystem.js';
 import { PortraitRenderSystem } from './modules/systems/PortraitRenderSystem.js';
 import { CardSystem } from './modules/systems/CardSystem.js';
+import { SupplierAttractionSystem } from './modules/systems/SupplierAttractionSystem.js';
 
 let world;
 let movementSystem;
@@ -56,6 +57,8 @@ let windRenderSystem;
 let portraitSystem;
 let cardSystem;
 
+let supplierAttractionSystem;
+
 document.oncontextmenu = () => false;  // Disable default right-click menu
 
 window.setup = function() {
@@ -70,7 +73,7 @@ window.setup = function() {
   tileRenderSystem = new TileRenderSystem();
   inputSystem = new InputSystem();
   treeInteractionSystem = new TreeInteractionSystem();
-  buildingSystem = new BuildingSystem();
+  buildingSystem = new BuildingSystem(world);
   followerSystem = new FollowerSystem();
   followerRenderSystem = new FollowerRenderSystem();
   windSystem = new WindArrowSystem();
@@ -86,6 +89,8 @@ window.setup = function() {
   groupWanderingSystem = new GroupWanderingSystem();
   pathFollowingSystem = new PathFollowingSystem();
   agentRenderSystem = new AgentRenderSystem();
+
+  supplierAttractionSystem = new SupplierAttractionSystem(world);
 
   // Add Systems to System Manager or manage manually
   // For simplicity, we'll manage manually in the draw loop
@@ -189,6 +194,8 @@ window.draw = function() {
   windSystem.update(world, deltaTime);
 
   windRenderSystem.update(world, this);
+
+  supplierAttractionSystem.update(deltaTime);
 
   // 10. Draw World Boundaries
   noFill();

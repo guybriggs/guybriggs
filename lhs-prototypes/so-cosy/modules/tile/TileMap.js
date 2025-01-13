@@ -62,17 +62,17 @@ export function generateTileMap() {
 export function colorForTileType(tileType) {
   switch (tileType) {
     case 'ocean':
-      return color(0, 105, 148);
+      return color('#7BD1D1');
     case 'beach':
-      return color(238, 214, 175);
+      return color('#DFE3C0');
     case 'grassland':
-      return color(34, 139, 34);
+      return color('#C6DA31');
     case 'forest':
-      return color(0, 100, 0);
+      return color('#549342');
     case 'mountain':
-      return color(139, 137, 137);
+      return color('#ACAD90');
     case 'lake':
-      return color(0, 191, 255);
+      return color('#7BD1D1');
 
     // Building / custom tiles
     case 'white_bricks': 
