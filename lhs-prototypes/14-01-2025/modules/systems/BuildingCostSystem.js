@@ -3,38 +3,31 @@ import { tileMap, tileSize } from '../tile/TileMap.js';
 
 /**
  * BuildingCostSystem
- *  - Observes building placements.
+ *  - Observes building placements (new or rebuild).
  *  - Deducts $10 from the player's Money component
- *    whenever a building is placed (wall, floor, door, table, bed).
+ *    whenever a building is placed or rebuilt.
  */
 export class BuildingCostSystem {
-  constructor() {
-    // No local state needed
-  }
+  constructor() {}
 
-  /**
-   * Called each frame or after building actions, depending on your approach.
-   * If you dispatch an event or store a “just placed” record,
-   * you can deduct money here.
-   */
   update(world) {
-    // Example approach: let BuildingSystem mark new placements in a queue,
-    // then we process them here.
     const placedBuildings = world.placedBuildingsQueue || [];
     if (placedBuildings.length === 0) return;
 
-    // We assume the player is entity #1 or we look it up
-    // (Alternatively, store a "playerEntity" globally and reference it.)
     const playerEntity = this.getPlayerEntity(world);
     if (!playerEntity) return;
 
     const moneyComp = world.getComponent(playerEntity, 'Money');
     if (!moneyComp) return;
 
-    // Deduct $10 for each building placed
+    // Deduct $10 for each building placed or rebuilt
     for (let building of placedBuildings) {
-      // building might look like: { type: 'wall'/'floor'/'bed', row, col, x, y, etc. }
-      if (this.isCostableType(building.type)) {
+      if (building.rebuild === true) {
+        // Rebuild scenario => -$10
+        moneyComp.amount -= 10;
+      } 
+      else if (this.isCostableType(building.type)) {
+        // Normal build scenario => -$10 if type is costable
         moneyComp.amount -= 10;
       }
     }
@@ -44,13 +37,13 @@ export class BuildingCostSystem {
   }
 
   isCostableType(type) {
-    // Charge for these
+    // Charge for these initial builds
     const costable = ['wall', 'floor', 'door', 'table', 'bed'];
     return costable.includes(type);
   }
 
   getPlayerEntity(world) {
-    // This example just looks for an entity with a 'Money' component
+    // Looks for any entity with a 'Money' component
     const moneyEntities = world.getEntitiesWith('Money');
     return moneyEntities.length > 0 ? moneyEntities[0] : null;
   }
