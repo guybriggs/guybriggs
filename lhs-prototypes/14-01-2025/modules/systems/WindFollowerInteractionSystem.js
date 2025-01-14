@@ -1,5 +1,5 @@
 // modules/systems/WindFollowerInteractionSystem.js
-import { randomRange } from '../utils/randomRange.js';
+import { RandomRange } from '../utils/RandomRange.js';
 import { EmotionTypes } from '../components/Emotion.js';
 import { typewriteLine } from '../logic/BubbleLogic.js';
 import { isInForest } from '../utils/EnvironmentUtils.js';
@@ -27,8 +27,8 @@ export class WindFollowerInteractionSystem {
 
     if (hitArrows.length) {
       if (!this.activeDialogues.has(follower)) {
-        const msg = randomRange(0,1) === 0 ? "AH! That's COLD!" : "*ACHOOO*";
-        typewriteLine(comp, msg, randomRange);
+        const msg = RandomRange(0,1) === 0 ? "AH! That's COLD!" : "*ACHOOO*";
+        typewriteLine(comp, msg, RandomRange);
         this.activeDialogues.set(follower, Date.now());
       } else {
         const start = this.activeDialogues.get(follower);

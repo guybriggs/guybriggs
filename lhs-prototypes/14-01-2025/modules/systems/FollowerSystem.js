@@ -1,7 +1,7 @@
 import { typewriteLine } from '../logic/BubbleLogic.js';
 import { startBubbleSequence, startNextBubble } from '../logic/BubbleLogic.js';
 import { isInFullyEnclosedRegion, houseHasUpgrades, isInGrassland, isInForest } from '../utils/EnvironmentUtils.js';
-import { randomRange } from '../utils/randomRange.js';
+import { RandomRange } from '../utils/RandomRange.js';
 
 export class FollowerSystem {
   constructor() {
@@ -33,7 +33,7 @@ export class FollowerSystem {
       followerComp.currentBubbleIndex >= followerComp.bubbleMessages.length
     ) {
       followerComp.initialDialogsDone = true;
-      followerComp.randomLineInterval = randomRange(3000, 10000);
+      followerComp.randomLineInterval = RandomRange(3000, 10000);
       followerComp.lastRandomLineTime = Date.now();
     }
 
@@ -55,7 +55,7 @@ export class FollowerSystem {
         }
 
         followerComp.lastRandomLineTime = now;
-        followerComp.randomLineInterval = randomRange(3000, 10000);
+        followerComp.randomLineInterval = RandomRange(3000, 10000);
       }
     }
   }
@@ -93,7 +93,7 @@ export class FollowerSystem {
     // Avoid cold lines if the follower is inside a forest
     if (!inHouse && !isInForest(followerPos)) {
       const lines = followerComp.coldLines;
-      text = lines[randomRange(0, lines.length - 1)];
+      text = lines[RandomRange(0, lines.length - 1)];
     } else {
       const greenColors = ["#CAE3C3", "#ACDE9D", "#92D17E", "#77CA5B", "#56D527"];
       let lines;
@@ -110,16 +110,16 @@ export class FollowerSystem {
         // If not inHouse but inGrass or forest, fallback to cold lines outside forest
         lines = followerComp.coldLines;
       }
-      text = lines[randomRange(0, lines.length - 1)];
+      text = lines[RandomRange(0, lines.length - 1)];
     }
 
-    typewriteLine(followerComp, text, randomRange);
+    typewriteLine(followerComp, text, RandomRange);
   }
 
   // Start the multi-dialogue bubble sequence from bubbleMessages
   startBubbleSequence(followerComp) {
     startBubbleSequence(followerComp, (fc) => {
-      startNextBubble(fc, randomRange, () => {
+      startNextBubble(fc, RandomRange, () => {
         // Called after finishing all initial bubble messages
       });
     });
