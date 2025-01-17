@@ -1,0 +1,50 @@
+// modules/systems/WanderingSystem.js
+
+import { MovementCooldownComponent } from '../components/MovementCooldown.js';
+import { RandomlyMoveComponent } from '../components/RandomlyMove.js';
+
+export class RandomlyMoveSystem {
+  constructor() {
+    this.changeInterval = 60; // frames
+    this.baseSpeed = 1; // base speed
+  }
+
+  update(world) {
+    world.entities.forEach(entity => {
+      const randomlyMove = world.getComponent(entity, 'RandomlyMove');
+      const position = world.getComponent(entity, 'Position');
+      const velocity = world.getComponent(entity, 'Velocity');
+
+      const follower = world.getComponent(entity, 'Follower');
+
+      /*if (follower) {
+        console.log('----------------');
+        console.log(randomlyMove);
+        console.log(position);
+        console.log(velocity);
+        console.log('----------------');
+      }*/
+
+      if (randomlyMove && position && velocity) {
+        // Skip agents in cooldown or sitting
+        if (world.hasComponent(entity, 'MovementCooldown')) {
+          return;
+        }
+
+        if (!randomlyMove.lastChange || frameCount - randomlyMove.lastChange > this.changeInterval) {
+          // Random direction
+          const angle = Math.random() * TWO_PI;
+          let speed = this.baseSpeed;
+
+          velocity.vx = Math.cos(angle) * speed;
+          velocity.vy = Math.sin(angle) * speed;
+          randomlyMove.lastChange = frameCount;
+          world.addComponent(entity, 'RandomlyMove', randomlyMove);
+
+          // After setting velocity, add MovementCooldown
+          world.addComponent(entity, 'MovementCooldown', MovementCooldownComponent(120)); // 2 seconds
+        }
+      }
+    });
+  }
+}
