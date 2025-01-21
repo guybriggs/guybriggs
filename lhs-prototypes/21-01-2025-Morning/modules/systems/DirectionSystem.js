@@ -106,6 +106,7 @@ export class DirectionSystem {
               waiting.until = 200;
 
               const nearestCash = findNearestTile(pos, 'cashregister');
+              if (!nearestCash) continue;
               const employerId = tileMap[nearestCash.row][nearestCash.col].claimed;
               const howMuchIWantToGetPaid = supply.reservationPrice;
 
