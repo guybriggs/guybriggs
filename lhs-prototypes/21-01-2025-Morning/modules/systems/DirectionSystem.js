@@ -32,7 +32,7 @@ export class DirectionSystem {
       const origin = world.getComponent(entity, 'Origin');
 
       // If waiting is still active, reduce its timer and skip movement logic
-      if (waiting.until > 0) {
+      if (waiting && waiting.until > 0) {
         waiting.until -= (1 / 10) * deltaTime;
         continue;
       }
@@ -45,101 +45,107 @@ export class DirectionSystem {
       // SUPPLIER LOGIC
       // ------------------------------
       if (supply) {
-        // 1) If supply.good === FISH
+
+        // (A) FISH
         if (supply.good === Goods.FISH) {
-          // If the agent doesn't have fish => pick up from nearest icebox
-          // If the agent does have fish => deliver to nearest cashregister
           const hasFish = inventory.items.fish && inventory.items.fish > 0;
 
           if (!hasFish) {
             // Find the nearest icebox tile that has fish
-            let boxTile = this.findTileWithFish(pos, 'icebox');
+            const boxTile = this.findTileWithFish(pos, 'icebox');
             if (!boxTile) {
-              // No icebox has fish; do nothing
+              // no tile found => skip
               continue;
             }
-            // Move towards that tile with threshold=30 => pick up from a short distance
+            // safe move
             if (this.moveTowards(world, deltaTime, entity, boxTile.row, boxTile.col, 30)) {
-              // If the tile actually has fish, pick up 1
               if (tileMap[boxTile.row][boxTile.col].inventory.items.fish > 0) {
                 tileMap[boxTile.row][boxTile.col].inventory.items.fish--;
                 inventory.items.fish = (inventory.items.fish || 0) + 1;
-                waiting.until = 200; // short wait
+                if (waiting) waiting.until = 200;
               }
             }
-          } else {
-            // Has fish => deliver to nearest cashregister
-            let registerTile = findNearestTile(pos, 'cashregister');
-            if (!registerTile) continue;
 
+          } else {
+            // deliver to nearest cashregister
+            const registerTile = findNearestTile(pos, 'cashregister');
+            if (!registerTile) continue;
             if (this.moveTowards(world, deltaTime, entity, registerTile.row, registerTile.col, 30)) {
-              // Drop all fish
-              let fishCount = inventory.items.fish;
+              // deposit fish
+              const fishCount = inventory.items.fish;
               inventory.items.fish = 0;
               tileMap[registerTile.row][registerTile.col].inventory.addItem('fish', fishCount);
-              waiting.until = 200;
+              if (waiting) waiting.until = 200;
             }
           }
-        }
-        // 2) If supply.good === ASSISTANT_WORK
-        else if (supply.good === Goods.ASSISTANT_WORK) {
-          // If no fish in inventory => go pick from fishingrod
-          // If has fish => deposit in nearest icebox
+
+        // (B) ASSISTANT_WORK
+        } else if (supply.good === Goods.ASSISTANT_WORK) {
           const hasFish = inventory.items.fish && inventory.items.fish > 0;
           if (!hasFish) {
-            let rodTile = this.findTileWithFish(pos, 'fishingrod');
+            // pick from fishingrod
+            const rodTile = this.findTileWithFish(pos, 'fishingrod');
             if (!rodTile) continue;
             if (this.moveTowards(world, deltaTime, entity, rodTile.row, rodTile.col, 30)) {
               if (tileMap[rodTile.row][rodTile.col].inventory.items.fish > 0) {
                 tileMap[rodTile.row][rodTile.col].inventory.items.fish--;
                 inventory.items.fish = (inventory.items.fish || 0) + 1;
-                waiting.until = 200;
+                if (waiting) waiting.until = 200;
               }
             }
           } else {
-            let iceboxTile = findNearestTile(pos, 'icebox');
+            // deposit in nearest icebox
+            const iceboxTile = findNearestTile(pos, 'icebox');
             if (!iceboxTile) continue;
             if (this.moveTowards(world, deltaTime, entity, iceboxTile.row, iceboxTile.col, 30)) {
               let fishCount = inventory.items.fish;
               inventory.items.fish = 0;
               tileMap[iceboxTile.row][iceboxTile.col].inventory.addItem('fish', fishCount);
-              waiting.until = 200;
+              if (waiting) waiting.until = 200;
 
+              // Then try to get paid from nearest cash register
               const nearestCash = findNearestTile(pos, 'cashregister');
-              if (!nearestCash) continue;
-              const employerId = tileMap[nearestCash.row][nearestCash.col].claimed;
-              const howMuchIWantToGetPaid = supply.reservationPrice;
-
-              exchangeMoney(world, employerId, entity, howMuchIWantToGetPaid);
-
+              if (nearestCash) {
+                const row = nearestCash.row, col = nearestCash.col;
+                // safely check row/col
+                if (row != null && col != null) {
+                  const employerId = tileMap[row][col].claimed;
+                  const howMuchIWantToGetPaid = supply.reservationPrice || 8;
+                  exchangeMoney(world, employerId, entity, howMuchIWantToGetPaid);
+                }
+              }
             }
           }
-        }
-        // 3) If supply.good === FISH_WORK
-        else if (supply.good === Goods.FISH_WORK) {
-          // If we have fish => deposit in fishingrod tile
-          // Otherwise => go to ocean to "catch" fish
+
+        // (C) FISH_WORK
+        } else if (supply.good === Goods.FISH_WORK) {
           if (inventory.hasItem(Goods.FISH)) {
-            let rodTile = findNearestTile(pos, 'fishingrod');
+            // deposit in fishingrod
+            const rodTile = findNearestTile(pos, 'fishingrod');
             if (!rodTile) continue;
             if (this.moveTowards(world, deltaTime, entity, rodTile.row, rodTile.col, 30)) {
               inventory.items.fish--;
               tileMap[rodTile.row][rodTile.col].inventory.addItem('fish', 1);
-              waiting.until = 200;
+              if (waiting) waiting.until = 200;
 
+              // Then try to get paid
               const nearestCash = findNearestTile(pos, 'cashregister');
-              const employerId = tileMap[nearestCash.row][nearestCash.col].claimed;
-              const howMuchIWantToGetPaid = supply.reservationPrice;
-
-              exchangeMoney(world, employerId, entity, howMuchIWantToGetPaid);
+              if (nearestCash) {
+                const row = nearestCash.row, col = nearestCash.col;
+                if (row != null && col != null) {
+                  const employerId = tileMap[row][col].claimed;
+                  const howMuchIWantToGetPaid = supply.reservationPrice || 10;
+                  exchangeMoney(world, employerId, entity, howMuchIWantToGetPaid);
+                }
+              }
             }
           } else {
-            let oceanTile = findNearestTile(pos, 'ocean');
+            // go to ocean for fish
+            const oceanTile = findNearestTile(pos, 'ocean');
             if (!oceanTile) continue;
             if (this.moveTowards(world, deltaTime, entity, oceanTile.row, oceanTile.col, 30)) {
-              // "Catch" fish
               inventory.addItem(Goods.FISH, 1);
-              waiting.until = 500;
+              if (waiting) waiting.until = 500;
             }
           }
         }
@@ -149,59 +155,52 @@ export class DirectionSystem {
       // ------------------------------
       } else if (demand) {
 
-
         if (inventory.hasItem(Goods.FISH)) {
-
+          // if we have fish => go back to origin
           if (!origin) {
-            console.log('tried to move back to origin, no o. comp');
+            console.log('tried to move back to origin, no origin comp');
             continue;
           }
-
-          if (this.moveTowards(world, deltaTime, entity, Math.floor(origin.x / tileSize), Math.floor(origin.y / tileSize), 1)) {
-
+          const originRow = Math.floor(origin.x / tileSize);
+          const originCol = Math.floor(origin.y / tileSize);
+          if (this.moveTowards(world, deltaTime, entity, originRow, originCol, 1)) {
             inventory.removeItem(Goods.FISH, 1);
-            waiting.until = 2000;
-
+            if (waiting) waiting.until = 2000;
           }
 
         } else {
-
-          let tile = findNearestTile(pos, 'cashregister');
+          // no fish => try to buy from nearest cashregister
+          const tile = findNearestTile(pos, 'cashregister');
           if (!tile) continue;
-  
           if (this.moveTowards(world, deltaTime, entity, tile.row, tile.col, 1)) {
             const cashInv = tileMap[tile.row][tile.col].inventory;
             if (!cashInv) {
-              console.log('tried to access tile inventory, cant');
+              console.log('no tile inventory at cashregister, skipping');
               continue;
             }
-
+            // try to remove fish from cashreg
             cashInv.removeItem(Goods.FISH, 1);
             inventory.addItem(Goods.FISH, 1);
-  
+
             const supplierId = tileMap[tile.row][tile.col].claimed;
-            if (!supplierId || !supplierId == -1) continue;
+            if (!supplierId || supplierId === -1) continue;
             const supplierSupply = world.getComponent(supplierId, 'Supply');
             if (!supplierSupply) continue;
 
-            const cost = supplierSupply.reservationPrice;
-
+            const cost = supplierSupply.reservationPrice || 8;
             exchangeMoney(world, entity, supplierId, cost);
           }
-
         }
-
 
       // ------------------------------
       // FALLBACK: Claim a tile if no supply or demand
       // ------------------------------
       } else {
-        let nearby = [
-          findNearestTile(pos, 'fishingrod'),
-          findNearestTile(pos, 'fridge'),
-          findNearestTile(pos, 'cashregister'),
-          findNearestTile(pos, 'icebox')
-        ];
+        const nearRod = findNearestTile(pos, 'fishingrod');
+        const nearFridge = findNearestTile(pos, 'fridge');
+        const nearRegister = findNearestTile(pos, 'cashregister');
+        const nearIcebox = findNearestTile(pos, 'icebox');
+        const nearby = [nearRod, nearFridge, nearRegister, nearIcebox];
 
         let tile = this.closest(nearby, pos);
         if (!tile) continue;
@@ -213,6 +212,7 @@ export class DirectionSystem {
 
         switch (tileMap[tile.row][tile.col].type) {
           case 'fishingrod': {
+            // claim => fish_work supply
             if (this.moveTowards(world, deltaTime, entity, tile.row, tile.col, 1)) {
               const good = Goods.FISH_WORK;
               const reservationPrice = RandomRange(8, 15);
@@ -223,6 +223,7 @@ export class DirectionSystem {
             break;
           }
           case 'fridge': {
+            // claim => demand fish
             if (this.moveTowards(world, deltaTime, entity, tile.row, tile.col, 1)) {
               const good = Goods.FISH;
               const reservationPrice = RandomRange(8, 15);
@@ -233,6 +234,7 @@ export class DirectionSystem {
             break;
           }
           case 'cashregister': {
+            // claim => supply fish
             if (this.moveTowards(world, deltaTime, entity, tile.row, tile.col, 1)) {
               const good = Goods.FISH;
               const reservationPrice = RandomRange(8, 15);
@@ -243,6 +245,7 @@ export class DirectionSystem {
             break;
           }
           case 'icebox': {
+            // claim => supply assistant_work
             if (this.moveTowards(world, deltaTime, entity, tile.row, tile.col, 1)) {
               const good = Goods.ASSISTANT_WORK;
               const reservationPrice = RandomRange(8, 15);
@@ -264,18 +267,14 @@ export class DirectionSystem {
 
   /**
    * A small separation step that prevents agents from overlapping each other.
-   * For each agent, compare to all other agents with a Renderable & Position,
-   * and if too close, push it away slightly.
    */
   applySeparation(world, entity, deltaTime) {
     const posA = world.getComponent(entity, 'Position');
     const renderA = world.getComponent(entity, 'Renderable');
     if (!posA || !renderA) return;
 
-    // We'll define a minimum spacing as the sum of their radii plus a small buffer
     const others = world.getEntitiesWith('Position', 'Renderable');
-    let offsetX = 0;
-    let offsetY = 0;
+    let offsetX = 0, offsetY = 0;
 
     for (let otherId of others) {
       if (otherId === entity) continue;
@@ -289,26 +288,25 @@ export class DirectionSystem {
       const desired = renderA.radius + renderB.radius + 2;
 
       if (dist < desired && dist > 0.0001) {
-        // They overlap => push A away from B
         const overlap = desired - dist;
         const ratio = overlap / dist;
-        offsetX += dx * ratio * 0.5; 
+        offsetX += dx * ratio * 0.5;
         offsetY += dy * ratio * 0.5;
       }
     }
 
-    // Apply offset in a controlled manner so they don't jostle too harshly
     posA.x += offsetX * 0.1;
     posA.y += offsetY * 0.1;
   }
 
   /**
-   * Move the entity toward the tile (given by row/col), stopping once
-   * within `threshold` distance. Return true if within that distance.
+   * moveTowards() => safely moves an entity to row,col
    */
   moveTowards(world, deltaTime, entity, row, col, threshold) {
     const pos = world.getComponent(entity, 'Position');
     const vel = world.getComponent(entity, 'Velocity');
+    if (row == null || col == null) return false; // skip if invalid
+
     const targetX = col * tileSize + tileSize / 2;
     const targetY = row * tileSize + tileSize / 2;
     const dx = targetX - pos.x;
@@ -328,7 +326,8 @@ export class DirectionSystem {
   }
 
   /**
-   * Find the tile of `tileType` that has fish, nearest to pos.
+   * findTileWithFish(pos, tileType) => returns the nearest tile of `tileType`
+   * that has fish > 0, or null if none.
    */
   findTileWithFish(pos, tileType) {
     let candidates = [];
@@ -346,17 +345,13 @@ export class DirectionSystem {
   }
 
   /**
-   * Return the closest tile (or object) from the array to pos.
-   * `array` items can have (row, col) or (x, y).
+   * closest(array, pos): among array of {row,col} or {x,y}, find nearest to pos.
    */
   closest(array, pos) {
     let best = null;
     let minDist = Infinity;
-
     for (let t of array) {
       if (!t) continue;
-      // If t has row/col, compute tile center
-      // or if it has x,y => use those
       let tileX, tileY;
       if (t.col != null && t.row != null) {
         tileX = t.col * tileSize + tileSize / 2;
@@ -367,7 +362,6 @@ export class DirectionSystem {
       } else {
         continue;
       }
-
       const dx = pos.x - tileX;
       const dy = pos.y - tileY;
       const dist = Math.hypot(dx, dy);
