@@ -24,7 +24,7 @@ export class PortraitRenderSystem {
     p5.text('👨‍🦱', iconCenterX, iconCenterY);
     p5.pop();
 
-    // 2) Retrieve money from ECS and draw stats
+    // 2) Retrieve money & reputation from world, draw stats
     p5.push();
     const statsX = this.x + this.iconWidth + 5;
     const statsY = this.y;
@@ -32,16 +32,21 @@ export class PortraitRenderSystem {
     p5.textSize(14);
     p5.textFont('Arial');
 
-    // Look up any entity with the 'Money' component; assume first is "the player"
+    // Find money from ECS
     const moneyEntities = world.getEntitiesWith('Money');
     let moneyVal = 0;
     if (moneyEntities.length > 0) {
       const mComp = world.getComponent(moneyEntities[0], 'Money');
-      moneyVal = mComp.amount; // read the current amount
+      moneyVal = mComp.amount;
     }
+
+    // If we haven't set world.reputation, default to 0
+    let repVal = world.reputation || 0;
 
     p5.text(`Utility: ${this.utilityValue}`, statsX, statsY + 14);
     p5.text(`Money:  $${moneyVal}`, statsX, statsY + 30);
+    p5.text(`Reputation: ${repVal}`, statsX, statsY + 46);
+
     p5.pop();
   }
 }

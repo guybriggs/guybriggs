@@ -17,6 +17,9 @@ export const cardData = [
     width: 50,
     height: 70
   },
+  { id: 'fish_register', label: 'Fish Cash Register', type: 'cashregister', icon: '🐟', width: 30, height: 45 },
+  { id: 'icebox', label: 'Icebox', type: 'icebox', icon: '🧊', width: 30, height: 45 },
+  { id: 'fishrod', label: 'Fishing Rod', type: 'fishingrod', icon: '🎣', width: 30, height: 45 },
   {
     id: 'cardBedroomFloor',
     label: 'Bedroom Floor',

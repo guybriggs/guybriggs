@@ -322,25 +322,32 @@ export class DirectionSystem {
       const freshInRegister = cashInv.items.fish || 0;
       const wastedInRegister = cashInv.items.wasted_fish || 0;
 
-      // (a) If there's fresh fish, buy fresh
-      if (freshInRegister > 0) {
-        cashInv.removeItem('fish', 1);
-        inventory.addItem('fish', 1);
-      }
-      // (b) Otherwise, if there's rotten fish, buy rotten
-      else if (wastedInRegister > 0) {
-        cashInv.removeItem('wasted_fish', 1);
-        inventory.addItem('wasted_fish', 1);
+      // (a) If there's fresh fish => buy fresh => reputation +2
+if (freshInRegister > 0) {
+  cashInv.removeItem('fish', 1);
+  inventory.addItem('fish', 1);
 
-        // If you buy rotten fish => random "Ew" dialogue
-        const randomLine = ROTTEN_DIALOGS[Math.floor(Math.random() * ROTTEN_DIALOGS.length)];
-        oneOffTalk(world, entity, randomLine);
-      }
-      // (c) Otherwise => negative fish logic
-      else {
-        cashInv.removeItem('fish', 1); // can go negative
-        inventory.addItem('fish', 1);
-      }
+  // Increase reputation by +2
+  world.reputation = (world.reputation || 0) + 2;
+}
+// (b) If there's rotten fish => buy rotten => reputation -10
+else if (wastedInRegister > 0) {
+  cashInv.removeItem('wasted_fish', 1);
+  inventory.addItem('wasted_fish', 1);
+
+  // Decrease reputation by -10
+  world.reputation = (world.reputation || 0) - 10;
+
+  // Show "rotten fish" dialogue
+  const randomLine = ROTTEN_DIALOGS[Math.floor(Math.random() * ROTTEN_DIALOGS.length)];
+  oneOffTalk(world, entity, randomLine);
+}
+// (c) Otherwise => negative fish logic
+else {
+  cashInv.removeItem('fish', 1); // can go negative
+  inventory.addItem('fish', 1);
+}
+
 
       // pay
       const supplierId = tileMap[chosenRegister.row][chosenRegister.col].claimed;

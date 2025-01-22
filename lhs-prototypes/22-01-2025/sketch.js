@@ -72,6 +72,7 @@ document.oncontextmenu = () => false;
 window.setup = function() {
   createCanvas(windowWidth, windowHeight);
   world = new World();
+  world.reputation = 0; // <-- Start reputation at zero
   generateTileMap();
 
   movementSystem = new MovementSystem();
