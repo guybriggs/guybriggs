@@ -166,6 +166,17 @@ export const spriteMappings = {
       ellipse(x + size * 0.5, y + size * 0.3, size / 5);
     }
   },
+
+  red_carpet: {
+    color: 'red',
+    draw: (tile, x, y, size = 20) => {
+      fill(tile.transparent ? 'grey' : '#E95F30');
+      rect(x, y, size, size);
+      // If tile.lockedDemand => draw consumer price above, etc.
+      // (the hooking logic references this tile type).
+    }
+  },
+
   fishingrod: {
     color: 'peru',
     draw: (tile, x, y, size = 20) => {
@@ -402,6 +413,41 @@ export const spriteMappings = {
       rect(x + size * 0.2, y + size * 0.4, size * 0.6, size * 0.4);
       fill('#999999');
       rect(x + size * 0.3, y + size * 0.3, size * 0.2, size * 0.1);
+    }
+  },
+  locker: {
+    color: 'dimgray',
+    draw: (tile, x, y, size = 20) => {
+      // Base rectangle
+      fill(tile.transparent ? 'grey' : 'dimgray');
+      rect(x, y, size, size);
+  
+      // Locker door border
+      stroke('#666');
+      strokeWeight(1);
+      noFill();
+      rect(x + 1, y + 1, size - 2, size - 2);
+  
+      // Vent slats (horizontal lines)
+      stroke('#888');
+      let ventStartY = y + size * 0.25; // start ~1/4 down
+      let ventH = size * 0.3;           // total vent region
+      let slatCount = 3;
+      for (let i = 0; i < slatCount; i++) {
+        let sy = ventStartY + (i * (ventH / slatCount));
+        line(x + size * 0.2, sy, x + size * 0.8, sy);
+      }
+  
+      // Locker handle
+      strokeWeight(2);
+      stroke('#bbb');
+      let handleX = x + size * 0.8;
+      let handleY = y + size * 0.6;
+      let handleH = size * 0.15;
+      line(handleX, handleY, handleX, handleY + handleH);
+  
+      // Clean up
+      noStroke();
     }
   },
 };

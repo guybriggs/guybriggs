@@ -182,6 +182,8 @@ export class CardSystem {
       cardWall,
       cardDoor,
 
+      { id: 'locker_card', label: 'Locker', type: 'locker', icon: '🔒', width: 30, height: 45 },
+      { id: 'red_carpet_card', label: 'Red Carpet', type: 'red_carpet', icon: '🔴', width: 30, height: 45 },
       { id: 'fish_register', label: 'Fish Cash Register', type: 'cashregister', icon: '🐟', width: 30, height: 45 },
       { id: 'fish_chips_register', label: 'Fish & Chips Cash Register', type: 'fishchips_cash', icon: '🍟', width: 30, height: 45 },
       { id: 'fish_stew_register', label: 'Fish Stew Cash Register', type: 'fishstew_cash', icon: '🍲', width: 30, height: 45 },

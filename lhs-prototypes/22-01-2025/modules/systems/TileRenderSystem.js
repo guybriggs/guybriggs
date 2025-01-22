@@ -23,7 +23,7 @@ function drawColoredFish(p5, x, y, color) {
 
 export class TileRenderSystem {
   /**
-   * Renders visible tiles, including stacked fish for fishingrod, cashregister, and icebox.
+   * Renders visible tiles, including stacked fish for fishingrod, red_carpet, and icebox.
    * If fish < 0, we render black fish for the absolute value of that number.
    * If fish > 0, we render normal blue fish.
    * Wasted fish are green.
@@ -61,14 +61,13 @@ export class TileRenderSystem {
           tileSize + 2
         );
 
-        // 2) We'll handle fish stacking if it's fishingrod, cashregister, or icebox
-        //    i.e. any tile type that can store fish we want to show
+        // 2) We'll handle fish stacking if it's fishingrod, red_carpet, or icebox
         const tileType = tile.type;
-        if (tileType === 'fishingrod' || tileType === 'cashregister' || tileType === 'icebox') {
+        if (tileType === 'fishingrod' || tileType === 'red_carpet' || tileType === 'icebox') {
           if (tile.inventory && tile.inventory.items) {
             const rawFishCount = tile.inventory.items.fish || 0;
             const wastedCount = tile.inventory.items.wasted_fish || 0;
-            
+
             // Separate normal vs. negative fish
             let normalFishCount = 0;
             let blackFishCount = 0;
@@ -78,33 +77,32 @@ export class TileRenderSystem {
               normalFishCount = rawFishCount; // positive => normal fish
             }
 
-            // If there's any fish (positive or negative) or wasted_fish, we draw them
+            // If there's any fish or wasted fish, draw them stacked
             if (normalFishCount > 0 || blackFishCount > 0 || wastedCount > 0) {
-              // We'll stack them above the tile center
               const tileCenterX = col * tileSize + tileSize / 2;
               const tileCenterY = row * tileSize + tileSize / 2;
               let offsetIndex = 0;
 
-              // a) Normal fish in a blue color
+              // a) Normal fish => blue
               for (let i = 0; i < normalFishCount; i++) {
                 const offsetY = -10 * offsetIndex;
                 drawColoredFish(
                   p5,
                   tileCenterX,
                   tileCenterY + offsetY - 10,
-                  '#82c8fa'  // a pleasant blue for normal fish
+                  '#82c8fa'
                 );
                 offsetIndex++;
               }
 
-              // b) Negative fish => black
+              // b) Negative fish => black (here it's set to '#E76868', can be changed if you prefer black)
               for (let i = 0; i < blackFishCount; i++) {
                 const offsetY = -10 * offsetIndex;
                 drawColoredFish(
                   p5,
                   tileCenterX,
                   tileCenterY + offsetY - 10,
-                  '#E76868' // black
+                  '#F3150A'
                 );
                 offsetIndex++;
               }
@@ -116,15 +114,15 @@ export class TileRenderSystem {
                   p5,
                   tileCenterX,
                   tileCenterY + offsetY - 10,
-                  '#33cc33'  // bright green
+                  '#33cc33'
                 );
                 offsetIndex++;
               }
             }
           }
         }
-        // 3) If not fishingrod/cashregister/icebox, show the original text-based inventory for debugging
         else {
+          // 3) If not fishingrod/red_carpet/icebox, show text-based inventory for debugging
           if (tile.inventory) {
             const inventoryArray = Object.keys(tile.inventory.items);
             if (inventoryArray.length > 0) {
@@ -142,16 +140,35 @@ export class TileRenderSystem {
           }
         }
 
-        // 4) If tile is a cash register => show reservation price text
-        if (tileType === 'cashregister' || tileType === 'fishingrod' || tileType === 'icebox') {
+        // 4) If tile is a locker/fishingrod/icebox => show supply price
+        if (tileType === 'locker' || tileType === 'fishingrod' || tileType === 'icebox') {
           const supplyComp = world.getComponent(tile.claimed, 'Supply');
           if (supplyComp) {
             p5.fill(0);
+            p5.textSize(12);
             p5.text(
               '$' + supplyComp.reservationPrice,
               col * tileSize,
               row * tileSize - tileSize / 4
             );
+          }
+        }
+
+        // NEW: 4b) If tile is a red_carpet & locked to a consumer => show consumer’s price
+        if (tileType === 'red_carpet') {
+          if (tile.lockedDemand != null) {
+            const demComp = world.getComponent(tile.lockedDemand, 'Demand');
+            if (demComp) {
+              p5.push();
+              p5.fill('black');
+              p5.textSize(12);
+
+              // Position slightly above the tile
+              const textX = col * tileSize + tileSize * 0.1;
+              const textY = row * tileSize - tileSize * 0.5;
+              p5.text(`$${demComp.reservationPrice}`, textX, textY);
+              p5.pop();
+            }
           }
         }
 

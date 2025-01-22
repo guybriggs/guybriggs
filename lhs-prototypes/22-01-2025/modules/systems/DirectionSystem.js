@@ -1,3 +1,5 @@
+// modules/systems/DirectionSystem.js
+
 import { Goods } from '../data/Goods.js';
 import { findNearestTile } from '../utils/EnvironmentUtils.js';
 import { tileMap, tileSize } from '../tile/TileMap.js';
@@ -71,12 +73,9 @@ export class DirectionSystem {
     }
   }
 
-  //----------------------------------------------------------------------
-  // 1) Fish Seller => supply.good === FISH
-  //
-  //    If NO icebox exists anywhere, they pick up from the fishing rod
-  //    (like the assistant does) and deposit directly to the cash register.
-  //----------------------------------------------------------------------
+  // ----------------------------------------------------------------------
+  // (A) Fish Seller => supply.good === FISH
+  // ----------------------------------------------------------------------
   handleFishSeller(world, entity, deltaTime) {
     const pos = world.getComponent(entity, 'Position');
     const waiting = world.getComponent(entity, 'Waiting');
@@ -90,16 +89,14 @@ export class DirectionSystem {
     const anyIcebox = this.tileExists('icebox');
 
     if (!anyIcebox) {
-      //------------------------------------------------
-      // CASE A: No icebox in the world => fishrod -> register
-      //------------------------------------------------
+      // If no icebox => fishrod -> deposit in red_carpet
       if (!hasFish) {
-        // Move to fishing rod that has fish
+        // pick up from fishingrod
         const rodTile = this.findTileWithAnyFish(pos, 'fishingrod');
         if (!rodTile) return;
         if (this.moveTowards(world, deltaTime, entity, rodTile.row, rodTile.col, 30)) {
           const tileInv = tileMap[rodTile.row][rodTile.col].inventory;
-          // Pick up one fish if available, else one wasted fish
+          // pick up fresh if possible, else wasted
           if ((tileInv.items.fish || 0) > 0) {
             tileInv.items.fish--;
             inventory.items.fish = (inventory.items.fish || 0) + 1;
@@ -110,14 +107,13 @@ export class DirectionSystem {
           if (waiting) waiting.until = 200;
         }
       } else {
-        // Deposit to the cash register
-        const registerTile = this.findTileOfTypeFewestTotalFish('cashregister');
+        // deposit in red_carpet
+        const registerTile = this.findTileOfTypeFewestTotalFish('red_carpet');
         if (!registerTile) return;
         if (this.moveTowards(world, deltaTime, entity, registerTile.row, registerTile.col, 30)) {
           const tileInv = tileMap[registerTile.row][registerTile.col].inventory;
           const depositFresh = inventory.items.fish || 0;
           const depositWasted = inventory.items.wasted_fish || 0;
-
           inventory.items.fish = 0;
           inventory.items.wasted_fish = 0;
 
@@ -127,16 +123,12 @@ export class DirectionSystem {
           if (depositWasted > 0) {
             tileInv.addItem('wasted_fish', depositWasted);
           }
-
           if (waiting) waiting.until = 200;
         }
       }
     } else {
-      //------------------------------------------------
-      // CASE B: At least one icebox => existing logic
-      //------------------------------------------------
+      // If there's an icebox => fishrod -> icebox -> register
       if (!hasFish) {
-        // Move to ICEBOX that has fish
         const boxTile = this.findTileWithAnyFish(pos, 'icebox');
         if (!boxTile) return;
         if (this.moveTowards(world, deltaTime, entity, boxTile.row, boxTile.col, 30)) {
@@ -151,15 +143,12 @@ export class DirectionSystem {
           if (waiting) waiting.until = 200;
         }
       } else {
-        // Deposit into the cash register
-        const registerTile = this.findTileOfTypeFewestTotalFish('cashregister');
+        const registerTile = this.findTileOfTypeFewestTotalFish('red_carpet');
         if (!registerTile) return;
         if (this.moveTowards(world, deltaTime, entity, registerTile.row, registerTile.col, 30)) {
           const tileInv = tileMap[registerTile.row][registerTile.col].inventory;
-
           const depositFresh = inventory.items.fish || 0;
           const depositWasted = inventory.items.wasted_fish || 0;
-
           inventory.items.fish = 0;
           inventory.items.wasted_fish = 0;
 
@@ -169,16 +158,15 @@ export class DirectionSystem {
           if (depositWasted > 0) {
             tileInv.addItem('wasted_fish', depositWasted);
           }
-
           if (waiting) waiting.until = 200;
         }
       }
     }
   }
 
-  //----------------------------------------------------------------------
+  // ----------------------------------------------------------------------
   // (B) Assistant => unchanged
-  //----------------------------------------------------------------------
+  // ----------------------------------------------------------------------
   handleAssistant(world, entity, deltaTime) {
     const pos = world.getComponent(entity, 'Position');
     const waiting = world.getComponent(entity, 'Waiting');
@@ -190,7 +178,6 @@ export class DirectionSystem {
     const hasSomething = (freshCount + wastedCount) > 0;
 
     if (!hasSomething) {
-      // pick from rod
       const rodTile = this.findTileWithAnyFish(pos, 'fishingrod');
       if (!rodTile) return;
       if (this.moveTowards(world, deltaTime, entity, rodTile.row, rodTile.col, 30)) {
@@ -205,7 +192,6 @@ export class DirectionSystem {
         if (waiting) waiting.until = 200;
       }
     } else {
-      // deposit -> icebox
       const iceboxTile = this.findTileOfTypeFewestTotalFish('icebox');
       if (!iceboxTile) return;
       if (this.moveTowards(world, deltaTime, entity, iceboxTile.row, iceboxTile.col, 30)) {
@@ -215,18 +201,12 @@ export class DirectionSystem {
 
         inventory.items.fish = 0;
         inventory.items.wasted_fish = 0;
-
-        if (depositFresh > 0) {
-          tileInv.addItem('fish', depositFresh);
-        }
-        if (depositWasted > 0) {
-          tileInv.addItem('wasted_fish', depositWasted);
-        }
-
+        if (depositFresh > 0) tileInv.addItem('fish', depositFresh);
+        if (depositWasted > 0) tileInv.addItem('wasted_fish', depositWasted);
         if (waiting) waiting.until = 200;
 
-        // Then attempt to get paid
-        const nearestCash = findNearestTile(pos, 'cashregister');
+        // get paid
+        const nearestCash = findNearestTile(pos, 'red_carpet');
         if (nearestCash) {
           const row = nearestCash.row;
           const col = nearestCash.col;
@@ -240,9 +220,9 @@ export class DirectionSystem {
     }
   }
 
-  //----------------------------------------------------------------------
+  // ----------------------------------------------------------------------
   // (C) Fisher => unchanged
-  //----------------------------------------------------------------------
+  // ----------------------------------------------------------------------
   handleFisher(world, entity, deltaTime) {
     const pos = world.getComponent(entity, 'Position');
     const waiting = world.getComponent(entity, 'Waiting');
@@ -258,7 +238,7 @@ export class DirectionSystem {
         if (waiting) waiting.until = 200;
 
         // get paid
-        const nearestCash = findNearestTile(pos, 'cashregister');
+        const nearestCash = findNearestTile(pos, 'red_carpet');
         if (nearestCash) {
           const row = nearestCash.row;
           const col = nearestCash.col;
@@ -270,7 +250,6 @@ export class DirectionSystem {
         }
       }
     } else {
-      // ocean
       const oceanTile = findNearestTile(pos, 'ocean');
       if (!oceanTile) return;
       if (this.moveTowards(world, deltaTime, entity, oceanTile.row, oceanTile.col, 30)) {
@@ -280,9 +259,9 @@ export class DirectionSystem {
     }
   }
 
-  //----------------------------------------------------------------------
-  // (D) handleDemand => go to the register with the *most* total fish
-  //----------------------------------------------------------------------
+  // ----------------------------------------------------------------------
+  // (D) handleDemand => updated to claim a register or go home if none
+  // ----------------------------------------------------------------------
   handleDemand(world, entity, deltaTime) {
     const pos = world.getComponent(entity, 'Position');
     const waiting = world.getComponent(entity, 'Waiting');
@@ -293,85 +272,96 @@ export class DirectionSystem {
     const freshInInv = inventory.items.fish || 0;
     const wastedInInv = inventory.items.wasted_fish || 0;
 
-    // 1) If already holding fish (fresh/wasted), go back to origin
-    if (freshInInv > 0 || wastedInInv > 0) {
-      if (!origin) return;
-      const originRow = Math.floor(origin.x / tileSize);
-      const originCol = Math.floor(origin.y / tileSize);
-
-      if (this.moveTowards(world, deltaTime, entity, originRow, originCol, 1)) {
-        // Drop exactly one fish at origin
-        if (freshInInv > 0) {
-          inventory.removeItem('fish', 1);
-        } else {
-          inventory.removeItem('wasted_fish', 1);
+    // 2) If consumer does NOT have a locked register => try to find/unlock one
+    if (!demand.lockedRegister) {
+      const registerTile = this.findRegisterWithMostFish(); 
+      if (!registerTile) {
+        // No free register => go home
+        if (origin) {
+          const originRow = Math.floor(origin.x / tileSize);
+          const originCol = Math.floor(origin.y / tileSize);
+          this.moveTowards(world, deltaTime, entity, originRow, originCol, 1);
         }
-        if (waiting) waiting.until = 2000;
+        return;
+      } else {
+        // Claim this register => lock them both ways
+        demand.lockedRegister = { row: registerTile.row, col: registerTile.col };
+        tileMap[registerTile.row][registerTile.col].lockedDemand = entity;
+        // Fall through => go to your newly locked register
       }
-      return;
     }
 
-    // 2) Otherwise => find the register with the *most* total fish
-    const chosenRegister = this.findRegisterWithMostFish();
+    // If we do have a lockedRegister => go there
+    if (demand.lockedRegister) {
+      const { row, col } = demand.lockedRegister;
+      if (this.moveTowards(world, deltaTime, entity, row, col, 1)) {
+        const cashInv = tileMap[row][col].inventory;
+        if (!cashInv) return;
 
-    if (!chosenRegister) return; // no register found at all
-    if (this.moveTowards(world, deltaTime, entity, chosenRegister.row, chosenRegister.col, 1)) {
-      const cashInv = tileMap[chosenRegister.row][chosenRegister.col].inventory;
-      if (!cashInv) return;
+        // NEW: 30-second purchase cooldown
+        const now = performance.now(); // or Date.now()
+        if (demand.lastBuyTime == null) {
+          // allow immediate first purchase
+          demand.lastBuyTime = now - 30000;
+        }
+        const timeSinceLastBuy = now - demand.lastBuyTime;
+        if (timeSinceLastBuy < 30000) {
+          // Haven't waited 30s yet => skip buying
+          return;
+        }
 
-      const freshInRegister = cashInv.items.fish || 0;
-      const wastedInRegister = cashInv.items.wasted_fish || 0;
+        // Otherwise => we can buy now
+        demand.lastBuyTime = now; // reset timer
 
-      // (a) If there's fresh fish => buy fresh => reputation +2
-if (freshInRegister > 0) {
-  cashInv.removeItem('fish', 1);
-  inventory.addItem('fish', 1);
+        const freshInRegister = cashInv.items.fish || 0;
+        const wastedInRegister = cashInv.items.wasted_fish || 0;
 
-  // Increase reputation by +2
-  world.reputation = (world.reputation || 0) + 2;
-}
-// (b) If there's rotten fish => buy rotten => reputation -10
-else if (wastedInRegister > 0) {
-  cashInv.removeItem('wasted_fish', 1);
-  inventory.addItem('wasted_fish', 1);
+        // If fresh => buy fresh => +2 rep
+        if (freshInRegister > 0) {
+          cashInv.removeItem('fish', 1);
+          inventory.addItem('fish', 1);
+          world.reputation = (world.reputation || 0) + 2;
+        }
+        // If rotten => buy => -10 rep
+        else if (wastedInRegister > 0) {
+          cashInv.removeItem('wasted_fish', 1);
+          inventory.addItem('wasted_fish', 1);
+          world.reputation = (world.reputation || 0) - 10;
+          const randomLine = ROTTEN_DIALOGS[Math.floor(Math.random() * ROTTEN_DIALOGS.length)];
+          oneOffTalk(world, entity, randomLine);
+        } else {
+          // No fish => do nothing or negative fish
+          cashInv.removeItem('fish', 1);
+          inventory.addItem('fish', 1);
+        }
 
-  // Decrease reputation by -10
-  world.reputation = (world.reputation || 0) - 10;
-
-  // Show "rotten fish" dialogue
-  const randomLine = ROTTEN_DIALOGS[Math.floor(Math.random() * ROTTEN_DIALOGS.length)];
-  oneOffTalk(world, entity, randomLine);
-}
-// (c) Otherwise => negative fish logic
-else {
-  cashInv.removeItem('fish', 1); // can go negative
-  inventory.addItem('fish', 1);
-}
-
-
-      // pay
-      const supplierId = tileMap[chosenRegister.row][chosenRegister.col].claimed;
-      if (!supplierId || supplierId === -1) return;
-      const supplierSupply = world.getComponent(supplierId, 'Supply');
-      if (!supplierSupply) return;
-
-      const cost = demand.reservationPrice || 10;
-      exchangeMoney(world, entity, supplierId, cost);
+        // Pay the supplier
+        const supplierId = tileMap[row][col].claimed;
+        if (supplierId && supplierId !== -1) {
+          const cost = demand.reservationPrice || 10;
+          exchangeMoney(world, entity, supplierId, cost);
+        }
+      }
     }
   }
 
-  //----------------------------------------------------------------------
-  // findRegisterWithMostFish => sums fresh + wasted, picks the tile with largest
-  //----------------------------------------------------------------------
+  // ----------------------------------------------------------------------
+  // findRegisterWithMostFish => sums fresh + wasted
+  // Now skips registers if lockedDemand != null
+  // ----------------------------------------------------------------------
   findRegisterWithMostFish() {
-    // Collect all cashregister tiles
     let bestTile = null;
     let maxCount = -Infinity;
 
     for (let r = 0; r < tileMap.length; r++) {
       for (let c = 0; c < tileMap[r].length; c++) {
         const tile = tileMap[r][c];
-        if (tile.type === 'cashregister' && tile.inventory) {
+        if (tile.type === 'red_carpet' && tile.inventory) {
+          // skip if locked
+          if (tile.lockedDemand != null) {
+            continue;
+          }
+
           const fCount = tile.inventory.items.fish || 0;
           const wCount = tile.inventory.items.wasted_fish || 0;
           const total = fCount + wCount;
@@ -382,26 +372,27 @@ else {
         }
       }
     }
-
-    // If we never found any registers => null
-    if (bestTile) {
-      // If maxCount = 0, it means all are empty => we'll still pick that tile
-      // which leads to negative fish logic
-      return bestTile;
-    }
+    if (bestTile) return bestTile;
     return null;
   }
 
-  //----------------------------------------------------------------------
+  // ----------------------------------------------------------------------
   // handleFallback => claim a tile if no supply/demand
-  //----------------------------------------------------------------------
+  // (Note: we removed the 'red_carpet' case from here)
+  // ----------------------------------------------------------------------
   handleFallback(world, entity, deltaTime) {
     const pos = world.getComponent(entity, 'Position');
+
+    // We consider fishingrod, fridge, icebox => normal
+    // 'locker' => spawn fish sellers
+    // (red_carpet is omitted so blank agents won't claim it)
     const nearRod = findNearestTile(pos, 'fishingrod');
     const nearFridge = findNearestTile(pos, 'fridge');
-    const nearRegister = findNearestTile(pos, 'cashregister');
+    const nearRegister = findNearestTile(pos, 'red_carpet');
     const nearIcebox = findNearestTile(pos, 'icebox');
-    const nearby = [nearRod, nearFridge, nearRegister, nearIcebox];
+    const nearLocker = findNearestTile(pos, 'locker');
+
+    const nearby = [ nearRod, nearFridge, nearRegister, nearIcebox, nearLocker ];
 
     let tile = this.closest(nearby, pos);
     if (!tile) return;
@@ -410,21 +401,15 @@ else {
     const tileType = tileMap[tile.row][tile.col].type;
     switch (tileType) {
       case 'fishingrod': {
-        // Fisher, as before
+        // fisher
         if (this.moveTowards(world, deltaTime, entity, tile.row, tile.col, 1)) {
           const good = Goods.FISH_WORK;
           const quantity = 999;
-
-          // Count how many rods have been claimed so far
           if (!world.numFishingRodsClaimed) {
             world.numFishingRodsClaimed = 0;
           }
-
           const rodIndex = world.numFishingRodsClaimed + 1;
-
-          // If no rods exist yet, pick an initial price:
           if (world.lastFisherPrice == null) {
-            // e.g. 8 dollars
             world.lastFisherPrice = 8;
             world.numFishingRodsClaimed = 1;
             tileMap[tile.row][tile.col].claimed = entity;
@@ -435,13 +420,10 @@ else {
             );
             return;
           }
-
-          // otherwise increment from lastFisherPrice
           const increment = getNextPriceIncrement(rodIndex);
           const newPrice = world.lastFisherPrice + increment;
           world.lastFisherPrice = newPrice;
           world.numFishingRodsClaimed++;
-
           world.addComponent(entity, 'Supply', SupplyComponent(good, newPrice, quantity));
           tileMap[tile.row][tile.col].claimed = entity;
         }
@@ -453,16 +435,11 @@ else {
         if (this.moveTowards(world, deltaTime, entity, tile.row, tile.col, 1)) {
           const good = Goods.ASSISTANT_WORK;
           const quantity = 999;
-
-          // Count how many iceboxes have been claimed so far
           if (!world.numIceboxesClaimed) {
             world.numIceboxesClaimed = 0;
           }
-
           const boxIndex = world.numIceboxesClaimed + 1;
-
           if (world.lastAssistantPrice == null) {
-            // e.g. 8 dollars initially
             world.lastAssistantPrice = 8;
             world.numIceboxesClaimed = 1;
             tileMap[tile.row][tile.col].claimed = entity;
@@ -473,36 +450,30 @@ else {
             );
             return;
           }
-
-          // increment
           const increment = getNextPriceIncrement(boxIndex);
           const newPrice = world.lastAssistantPrice + increment;
           world.lastAssistantPrice = newPrice;
           world.numIceboxesClaimed++;
-
           world.addComponent(entity, 'Supply', SupplyComponent(good, newPrice, quantity));
           tileMap[tile.row][tile.col].claimed = entity;
         }
         break;
       }
 
-      case 'cashregister': {
-        // Fish seller
+      case 'locker': {
+        // spawn fish sellers
         if (this.moveTowards(world, deltaTime, entity, tile.row, tile.col, 1)) {
           const good = Goods.FISH;
           const quantity = 999;
 
-          // Count how many registers have been claimed so far
-          if (!world.numRegistersClaimed) {
-            world.numRegistersClaimed = 0;
+          if (!world.numLockersClaimed) {
+            world.numLockersClaimed = 0;
           }
-
-          const regIndex = world.numRegistersClaimed + 1;
+          const lockerIndex = world.numLockersClaimed + 1;
 
           if (world.lastFishSellerPrice == null) {
-            // e.g. 8 dollars initially
             world.lastFishSellerPrice = 8;
-            world.numRegistersClaimed = 1;
+            world.numLockersClaimed = 1;
             tileMap[tile.row][tile.col].claimed = entity;
             world.addComponent(
               entity,
@@ -512,13 +483,16 @@ else {
             return;
           }
 
-          // increment
-          const increment = getNextPriceIncrement(regIndex);
+          const increment = getNextPriceIncrement(lockerIndex);
           const newPrice = world.lastFishSellerPrice + increment;
           world.lastFishSellerPrice = newPrice;
-          world.numRegistersClaimed++;
+          world.numLockersClaimed++;
 
-          world.addComponent(entity, 'Supply', SupplyComponent(good, newPrice, quantity));
+          world.addComponent(
+            entity,
+            'Supply',
+            SupplyComponent(good, newPrice, quantity)
+          );
           tileMap[tile.row][tile.col].claimed = entity;
         }
         break;
@@ -534,12 +508,14 @@ else {
         }
         break;
       }
+
+      // Notice we do NOT handle 'red_carpet' here => blank agents won't claim it
     }
   }
 
-  //-------------------------------------------------------------------------
-  // Helper: check if there's at least one tile of a given type in the map
-  //-------------------------------------------------------------------------
+  // ------------------------------------------------------------------------
+  // tileExists => checks if the map has a tile of that type anywhere
+  // ------------------------------------------------------------------------
   tileExists(tileType) {
     for (let r = 0; r < tileMap.length; r++) {
       for (let c = 0; c < tileMap[r].length; c++) {
@@ -551,10 +527,9 @@ else {
     return false;
   }
 
-//-------------------------------------------------------------------------
+  // ----------------------------------------------------------------------
   // findTileOfTypeFewestTotalFish => unchanged
-  //-------------------------------------------------------------------------
-
+  // ----------------------------------------------------------------------
   findTileOfTypeFewestTotalFish(tileType) {
     let best = null;
     let minCount = Infinity;
@@ -575,9 +550,9 @@ else {
     return best;
   }
 
-//--------------------------------------------------------------------------
-  // Like findTileWithFish, but returns any tile that has fresh OR wasted fish.
-  //--------------------------------------------------------------------------
+  // ----------------------------------------------------------------------
+  // findTileWithAnyFish => unchanged
+  // ----------------------------------------------------------------------
   findTileWithAnyFish(pos, tileType) {
     const candidates = [];
     for (let r = 0; r < tileMap.length; r++) {
@@ -596,6 +571,7 @@ else {
     return this.closest(candidates, pos);
   }
 
+  // Movement + separation
   moveTowards(world, deltaTime, entity, row, col, threshold) {
     const pos = world.getComponent(entity, 'Position');
     const vel = world.getComponent(entity, 'Velocity');
@@ -649,6 +625,7 @@ else {
     posA.y += offsetY * 0.1;
   }
 
+  // Helper => findTileWithFish
   findTileWithFish(pos, tileType) {
     const candidates = [];
     for (let r = 0; r < tileMap.length; r++) {
@@ -664,6 +641,7 @@ else {
     return this.closest(candidates, pos);
   }
 
+  // closest => standard helper
   closest(array, pos) {
     let best = null;
     let minDist = Infinity;
