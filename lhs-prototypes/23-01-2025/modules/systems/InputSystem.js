@@ -1,4 +1,5 @@
 // modules/systems/InputSystem.js
+
 export class InputSystem {
   constructor(cardSystem) {
     this.cardSystem = cardSystem;
@@ -18,20 +19,21 @@ export class InputSystem {
     if (keyIsDown(65)) velocity.vx = -speed; // A
     if (keyIsDown(68)) velocity.vx = speed;  // D
 
-    // Handle numeric keys 1-9 for card selection
-    for (let n = 1; n <= 9; n++) {
-      // Check if the key is pressed
-      if (keyIsDown(48 + n)) { // Key codes for '1'-'9' are 49-57
+    // --- Press '1' - '8' to quick-select deck cards
+    for (let n = 1; n <= 8; n++) {
+      if (keyIsDown(48 + n)) {
         const idx = n - 1;
-        const cardSys = this.cardSystem;
-        // Ensure index is within bounds of cards array
-        if (idx < cardSys.cards.length) {
-          const card = cardSys.cards[idx];
-          // Toggle selection logic
-          cardSys.selectedCardType = card.type;
-          cardSys.wobbleFrame = 10;
+        if (idx < this.cardSystem.cards.length) {
+          const card = this.cardSystem.cards[idx];
+          this.cardSystem.selectedCardType = card.type;
+          this.cardSystem.wobbleFrame = 10;
         }
       }
+    }
+
+    // --- Press '9' => Increase card UI scale
+    if (keyIsDown(57)) { // code for '9'
+      this.cardSystem.increaseUIScale(0.1); // increase 10%
     }
   }
 }

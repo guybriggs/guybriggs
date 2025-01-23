@@ -312,12 +312,43 @@ export class CardSystem {
     this.wobbleFrame = 0;
     this.currentDeck = 'default';
 
-    // Listen for ESC to clear selection
+    // Scaling factor for card UI
+    this.cardUIScale = 1.0; // Initialize scale to normal size
+
+    // Listen for ESC to clear selection and '9'/'8' to adjust scale
     window.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') {
         this.selectedCardType = null;
       }
+      if (e.key === '9') {
+        this.increaseUIScale(0.1); // Increase scale by 10%
+      }
+      if (e.key === '8') {
+        this.decreaseUIScale(0.1); // Decrease scale by 10%
+      }
     });
+  }
+
+  //----------------------------------------
+  // Method to increase the UI scale
+  //----------------------------------------
+  increaseUIScale(amount = 0.1) {
+    this.cardUIScale += amount;
+    // Clamp the scale factor to prevent excessive growth
+    if (this.cardUIScale > 3.0) { // Maximum 300%
+      this.cardUIScale = 3.0;
+    }
+  }
+
+  //----------------------------------------
+  // Method to decrease the UI scale
+  //----------------------------------------
+  decreaseUIScale(amount = 0.1) {
+    this.cardUIScale -= amount;
+    // Clamp the scale factor to prevent it from becoming too small
+    if (this.cardUIScale < 0.5) { // Minimum 50%
+      this.cardUIScale = 0.5;
+    }
   }
 
   //----------------------------------------
@@ -398,7 +429,7 @@ export class CardSystem {
   }
 
   //----------------------------------------
-  // update => check hovered
+  // update => check hovered using scaled dims
   //----------------------------------------
   update(p5) {
     const mx = p5.mouseX;
@@ -406,8 +437,13 @@ export class CardSystem {
     this.hoveredCard = null;
 
     for (let c of this.cards) {
-      if (mx >= c.x && mx < c.x + c.width &&
-          my >= c.y && my < c.y + c.height) {
+      // Use scaledWidth/scaledHeight for hit-testing
+      const w = c.scaledWidth || c.width * this.cardUIScale;
+      const h = c.scaledHeight || c.height * this.cardUIScale;
+      if (
+        mx >= c.x && mx < c.x + w &&
+        my >= c.y && my < c.y + h
+      ) {
         this.hoveredCard = c.id;
       }
     }
@@ -418,9 +454,12 @@ export class CardSystem {
   //----------------------------------------
   handleClick(mx, my) {
     for (let c of this.cards) {
+      const w = c.width * this.cardUIScale;
+      const h = c.height * this.cardUIScale;
+
       if (
-        mx >= c.x && mx < c.x + c.width &&
-        my >= c.y && my < c.y + c.height
+        mx >= c.x && mx < c.x + w &&
+        my >= c.y && my < c.y + h
       ) {
         if (this.selectedCardType === c.type) {
           this.selectedCardType = null;
@@ -435,7 +474,7 @@ export class CardSystem {
   }
 
   //----------------------------------------
-  // draw => render the deck at bottom
+  // draw => render the deck at bottom with scaling
   //----------------------------------------
   draw(p5, world) {
     p5.push();
@@ -443,12 +482,27 @@ export class CardSystem {
     p5.textSize(20);
 
     const toRender = this.cards;
-    const totalW =
-      toRender.reduce((acc, c) => acc + c.width, 0) +
-      (toRender.length - 1) * this.spacing;
 
+    // Get scaled widths and heights
+    const scaledDimensions = toRender.map(c => {
+      const w = c.width * this.cardUIScale;
+      const h = c.height * this.cardUIScale;
+      return { w, h };
+    });
+
+    // Sum of all scaled widths + spacing
+    const totalW = scaledDimensions.reduce((acc, dim) => acc + dim.w, 0)
+                  + (toRender.length - 1) * this.spacing;
+
+    // Maximum card height to adjust vertical position
+    const maxCardH = Math.max(...scaledDimensions.map(dim => dim.h));
+
+    // Compute deck bottom edge to ensure it doesn't go off-screen
+    const deckBottomEdge = p5.height - 10; // 10 pixels from bottom
+    const cardY = deckBottomEdge - maxCardH;
+
+    // Starting X position to center the deck
     let startX = (p5.width - totalW) / 2;
-    const cardY = p5.height - this.bottomOffset;
 
     if (this.wobbleFrame > 0) {
       this.wobbleFrame--;
@@ -459,18 +513,26 @@ export class CardSystem {
       ? p5.color(154, 184, 229) // subtle blue
       : p5.color(255, 220);     // normal off-white
 
-    for (let c of toRender) {
+    for (let i = 0; i < toRender.length; i++) {
+      const c = toRender[i];
+      const { w, h } = scaledDimensions[i];
+
+      // Store these on the card for hit-testing and positioning
       c.x = startX;
       c.y = cardY;
-      startX += c.width + this.spacing;
+      c.scaledWidth = w;
+      c.scaledHeight = h;
+
+      startX += w + this.spacing;
 
       const isHovered = (this.hoveredCard === c.id);
       const isSelected = (this.selectedCardType === c.type);
 
       p5.push();
-      p5.translate(c.x + c.width / 2, c.y + c.height / 2);
+      // Translate to the center of the scaled card
+      p5.translate(c.x + w / 2, c.y + h / 2);
 
-      // Wobble
+      // Wobble if hovered or selected
       if ((isHovered || isSelected) && this.wobbleFrame > 0) {
         const rotAmt = 0.1 * Math.sin(this.wobbleFrame * 0.5);
         p5.rotate(rotAmt);
@@ -478,71 +540,67 @@ export class CardSystem {
       }
 
       // Move origin to top-left
-      p5.translate(-c.width / 2, -c.height / 2);
+      p5.translate(-w / 2, -h / 2);
 
-      // Base card
+      // Base card background
       p5.noStroke();
       p5.fill(baseColor);
-      p5.rect(0, 0, c.width, c.height, 5);
+      p5.rect(0, 0, w, h, 5);
 
       // Hover highlight
       if (isHovered) {
         p5.fill(255, 230, 150, 150);
-        p5.rect(0, 0, c.width, c.height, 5);
+        p5.rect(0, 0, w, h, 5);
       }
       // Selected highlight
       if (isSelected) {
         p5.fill(255, 200, 100, 200);
-        p5.rect(0, 0, c.width, c.height, 5);
+        p5.rect(0, 0, w, h, 5);
       }
 
-      // Main icon in center
+      // Draw card icon in center
       p5.fill(30);
-      p5.textSize(16);
-      p5.text(c.icon, c.width / 2, c.height / 2);
+      p5.textSize(16 * this.cardUIScale); // Scale text size
+      p5.text(c.icon, w / 2, h / 2);
 
-      // If hovered => show label + cost
+      // If hovered => show label + cost above
       if (isHovered) {
         p5.fill(0);
-        p5.textSize(12);
-        p5.text(c.label, c.width / 2, -25);
-        p5.text('$10', c.width / 2, -10);
+        p5.textSize(12 * this.cardUIScale); // Scale text size
+        p5.text(c.label, w / 2, -20 * this.cardUIScale); 
+        p5.text('$10', w / 2, -5 * this.cardUIScale);
       }
 
-      // Extra corner icons for floors (bottom-right corner):
-      if (c.type === 'bedroom_floor') {
-        this.drawCornerIcon(p5, '🛏️', c.width, c.height);
-      } else if (c.type === 'kitchen_floor') {
-        this.drawCornerIcon(p5, '🍳', c.width, c.height);
-      } else if (c.type === 'livingroom_floor') {
-        this.drawCornerIcon(p5, '🛋️', c.width, c.height);
-      } else if (c.type === 'bathroom_floor') {
-        this.drawCornerIcon(p5, '🚽', c.width, c.height);
-      } else if (c.type === 'farm_floor') {
-        this.drawCornerIcon(p5, '🌾', c.width, c.height);
-      } else if (c.type === 'fishproduction_floor') {
-        this.drawCornerIcon(p5, '🐟', c.width, c.height);
-      } else if (c.type === 'reception_floor') {
-        this.drawCornerIcon(p5, '🏷️', c.width, c.height);
-      } else if (c.type === 'staffroom_floor') {
-        this.drawCornerIcon(p5, '☕', c.width, c.height);
-      } else if (c.type === 'loadingbay_floor') {
-        this.drawCornerIcon(p5, '📦', c.width, c.height);
-      }
+      // If it's a floor => draw a tiny corner icon
+      this.maybeDrawFloorCornerIcon(p5, c.type, w, h);
 
       p5.pop();
     }
+
     p5.pop();
   }
 
-  // Small helper to draw corner icon at bottom-right
-  drawCornerIcon(p5, icon, cardW, cardH) {
+  // Small helper to draw corner icon at bottom-right with scaling
+  maybeDrawFloorCornerIcon(p5, type, cardW, cardH) {
+    let icon = null;
+    if (type === 'bedroom_floor')        icon = '🛏️';
+    else if (type === 'kitchen_floor')   icon = '🍳';
+    else if (type === 'livingroom_floor')icon = '🛋️';
+    else if (type === 'bathroom_floor')  icon = '🚽';
+    else if (type === 'farm_floor')      icon = '🌾';
+    else if (type === 'fishproduction_floor') icon = '🐟';
+    else if (type === 'reception_floor') icon = '🏷️';
+    else if (type === 'staffroom_floor') icon = '☕';
+    else if (type === 'loadingbay_floor')icon = '📦';
+
+    if (!icon) return;
+
     p5.push();
     p5.textAlign(p5.CENTER, p5.CENTER);
-    p5.textSize(14);
+    p5.textSize(14 * this.cardUIScale); // Scale corner icon
     p5.fill(0);
-    // For bottom-right, offset ~ 12 px from right, ~ 15 px from bottom
-    p5.text(icon, cardW - 12, cardH - 15);
+    // For bottom-right, offset ~ 12 px from right, ~ 15 px from bottom, scaled
+    p5.text(icon, cardW - 12 * this.cardUIScale, cardH - 15 * this.cardUIScale);
     p5.pop();
   }
 }
