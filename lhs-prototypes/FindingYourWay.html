@@ -1,0 +1,767 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Top-Down Game – Gravity Timer & Wells (Smooth Road, No Fork)</title>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      background: #000;
+    }
+    canvas { display: block; }
+    /* Control panel styling */
+    #controls {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      color: white;
+      font-family: sans-serif;
+      z-index: 100;
+      background: rgba(0,0,0,0.5);
+      padding: 10px;
+      border-radius: 5px;
+    }
+    #controls label { display: block; margin-bottom: 5px; }
+    #controls input[type="range"] { width: 150px; }
+    /* Checkbox row: align checkbox and its label inline */
+    .checkboxRow {
+      margin-top: 10px;
+      font-size: 0.9em;
+    }
+    .checkboxRow label {
+      display: inline-block;
+      vertical-align: middle;
+      margin: 0;
+    }
+    .checkboxRow span {
+      display: inline-block;
+      vertical-align: middle;
+      margin-left: 5px;
+    }
+  </style>
+</head>
+<body>
+  <!-- Control Panel -->
+  <div id="controls">
+    <div>
+      <label>Well Radius: <span id="wellRadiusValue">322</span></label>
+      <input id="wellRadiusSlider" type="range" min="50" max="500" value="285">
+    </div>
+    <div>
+      <label>Inner Pull Strength: <span id="innerPullStrengthValue">0.8</span></label>
+      <input id="innerPullStrengthSlider" type="range" min="0" max="2" step="0.1" value="0.5">
+    </div>
+    <div>
+      <label>Outer Pull Strength: <span id="outerPullStrengthValue">1.0</span></label>
+      <input id="outerPullStrengthSlider" type="range" min="0" max="2" step="0.1" value="1.0">
+    </div>
+    <div>
+      <label>Max Deflection: <span id="maxDeflectionValue">1.3</span></label>
+      <input id="maxDeflectionSlider" type="range" min="0" max="3" step="0.1" value="2.3">
+    </div>
+    <div>
+      <label>Gravity Timer (ms): <span id="timerValue">1900</span></label>
+      <input id="timerSlider" type="range" min="0" max="10000" step="100" value="1000">
+    </div>
+    <div class="checkboxRow">
+      <label><input type="checkbox" id="disableGravityCheckbox"></label>
+      <span>Disable Gravity Wells</span>
+    </div>
+    <div style="margin-top: 10px; font-size: 0.9em;">
+      Press <strong>X</strong> to toggle the well circles.<br>
+      Press <strong>F</strong> to spawn a door.
+    </div>
+  </div>
+  
+  <canvas id="gameCanvas"></canvas>
+  <script>
+    // ----- Global control variables and slider event listeners -----
+    let defaultWellRadius = 285;
+    let innerPullStrength = 0.5;
+    let outerPullStrength = 1.0;
+    let maxDeflectionValue = 2.3;
+    let defaultTimer = 1000;
+    let disableGravityWells = false;
+    
+    document.getElementById("wellRadiusSlider").addEventListener("input", function() {
+      defaultWellRadius = Number(this.value);
+      document.getElementById("wellRadiusValue").textContent = this.value;
+      gravityWells.forEach(well => well.radius = defaultWellRadius);
+    });
+    document.getElementById("innerPullStrengthSlider").addEventListener("input", function() {
+      innerPullStrength = Number(this.value);
+      document.getElementById("innerPullStrengthValue").textContent = this.value;
+    });
+    document.getElementById("outerPullStrengthSlider").addEventListener("input", function() {
+      outerPullStrength = Number(this.value);
+      document.getElementById("outerPullStrengthValue").textContent = this.value;
+    });
+    document.getElementById("maxDeflectionSlider").addEventListener("input", function() {
+      maxDeflectionValue = Number(this.value);
+      document.getElementById("maxDeflectionValue").textContent = this.value;
+    });
+    document.getElementById("timerSlider").addEventListener("input", function() {
+      defaultTimer = Number(this.value);
+      document.getElementById("timerValue").textContent = this.value;
+    });
+    document.getElementById("disableGravityCheckbox").addEventListener("change", function() {
+      disableGravityWells = this.checked;
+    });
+    
+    // ----- 1. CANVAS & GLOBAL SETUP -----
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    function resize() {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+    }
+    window.addEventListener('resize', resize);
+    resize();
+    
+    // Map dimensions and player definition.
+    const mapWidth = 2000, mapHeight = 2000;
+    const player = { x: mapWidth/2, y: mapHeight/2, radius: 10, speed: 300 };
+    
+    // Camera follows the player.
+    const camera = { x: player.x, y: player.y, zoom: 1 };
+    
+    // Keyboard input for WASD.
+    const keys = {};
+    window.addEventListener('keydown', e => keys[e.key.toLowerCase()] = true);
+    window.addEventListener('keyup', e => keys[e.key.toLowerCase()] = false);
+    
+    // Mouse wheel zoom.
+    canvas.addEventListener('wheel', e => {
+      camera.zoom += -e.deltaY * 0.001;
+      camera.zoom = Math.max(0.1, Math.min(5, camera.zoom));
+    });
+    
+    // Track current mouse position (for spawning and dragging).
+    let currentMouse = { x: 0, y: 0 };
+    canvas.addEventListener('mousemove', e => {
+      const rect = canvas.getBoundingClientRect();
+      currentMouse.x = e.clientX - rect.left;
+      currentMouse.y = e.clientY - rect.top;
+      if (draggingWell !== null) {
+        const wx = camera.x - (canvas.width/(2*camera.zoom)) + currentMouse.x/camera.zoom;
+        const wy = camera.y - (canvas.height/(2*camera.zoom)) + currentMouse.y/camera.zoom;
+        gravityWells[draggingWell].position = { x: wx, y: wy };
+      }
+    });
+    
+    // Global variables.
+    let gravityWells = [];  // Array to hold gravity wells.
+    let doors = [];         // Array to hold door objects.
+    // Create moving agents for Pete and Sam.
+    let pete, sam;
+    let showGravityWellRadius = true;  // Toggle for drawing the outer well circle.
+    let showInnerCircle = true;        // Toggle for drawing the inner pull (dotted) circle.
+    let draggingWell = null;           // Index of the well being dragged.
+    let lastTime = performance.now();  // For game loop timing.
+    
+    // ----- 2. DECORATIVE ELEMENTS DATA -----
+    // Pine trees (background decoration).
+    const pineCluster = { x: mapWidth - 600, y: mapHeight - 600, width: 500, height: 500, trees: [] };
+    for (let i = 0; i < 50; i++) {
+      pineCluster.trees.push({ 
+        x: pineCluster.x + Math.random() * pineCluster.width,
+        y: pineCluster.y + Math.random() * pineCluster.height
+      });
+    }
+    
+    // ----- New Main Road (Smooth, Single Curve) -----
+    const mainRoad = {
+      start: { x: mapWidth, y: 1300 },
+      cp1: { x: 1500, y: 800 },
+      cp2: { x: 500, y: 1800 },
+      end: { x: 0, y: 1300 }
+    };
+    const roadWidth = 80;  // Thinner road.
+    const roadColor = "#DFDDC0";
+    
+    function drawRoads() {
+      ctx.beginPath();
+      ctx.moveTo(mainRoad.start.x, mainRoad.start.y);
+      ctx.bezierCurveTo(mainRoad.cp1.x, mainRoad.cp1.y,
+                        mainRoad.cp2.x, mainRoad.cp2.y,
+                        mainRoad.end.x, mainRoad.end.y);
+      ctx.lineWidth = roadWidth;
+      ctx.strokeStyle = roadColor;
+      ctx.lineJoin = "round";
+      ctx.lineCap = "round";
+      ctx.stroke();
+    }
+    
+    // ----- 3. AGENT DATA & GRAVITY PROPERTIES -----
+    function createAgent(name, color, startX, startY, destX, destY) {
+      return {
+        origin: { x: startX, y: startY },
+        destination: { x: destX, y: destY },
+        pos: { x: startX, y: startY },
+        state: "toRegister", timer: 0, speed: 150,
+        name, color,
+        gravityTimer: null,
+        gravityDisabled: false,
+        activeWellIndex: undefined,
+        prevWells: [],
+        wellChangeCooldown: 0
+      };
+    }
+    const bob = createAgent("Bob", "orange", mapWidth - 100, mapHeight - 100, 160, 950);
+    const worker = createAgent("Worker", "green", mapWidth / 2 - 250, 80, 160, 950);
+    // Use the given value for Sara:
+    const sara = createAgent("Sara", "orange", 200, 1800, 160, 950);
+    // For Pete and Sam, use the provided values.
+    const potatoCenter = { x: 1000, y: 553 };  // Center of the right blob.
+    pete = createAgent("Pete", "orange", 2090, 140, potatoCenter.x, potatoCenter.y);
+    sam  = createAgent("Sam", "orange", 2010, 1160, potatoCenter.x, potatoCenter.y);
+    
+    // ----- 3a. WOLF PACK DATA -----
+    const wolfPack = [
+      { x: 1250, y: 1450 },
+      { x: 1220, y: 1500 },
+      { x: 1280, y: 1550 },
+      { x: 1200, y: 1520 },
+      { x: 1260, y: 1480 }
+    ];
+    
+    // ----- 4. HELPER FUNCTIONS (Vector Math, Deflection, etc.) -----
+    function rotateVector(v, angle) {
+      return { x: v.x * Math.cos(angle) - v.y * Math.sin(angle),
+               y: v.x * Math.sin(angle) + v.y * Math.cos(angle) };
+    }
+    
+    // Revised deflection calculation:
+    // For r < (well.radius/2), use a quadratic falloff so that the inner pull strongly pulls toward the center.
+    function computeDeflectedDirection(obj, baseDir) {
+      if (obj.activeWellIndex === undefined) return baseDir;
+      const well = gravityWells[obj.activeWellIndex];
+      const dx = well.position.x - obj.pos.x, dy = well.position.y - obj.pos.y;
+      const r = Math.hypot(dx, dy);
+      const wellDir = { x: dx / r, y: dy / r };
+      let dot = baseDir.x * wellDir.x + baseDir.y * wellDir.y;
+      dot = Math.max(-1, Math.min(1, dot));
+      let delta = Math.acos(dot);
+      const cross = baseDir.x * wellDir.y - baseDir.y * wellDir.x;
+      if (cross < 0) delta = -delta;
+      
+      let deflectionAngle = 0;
+      if (r < (well.radius / 2)) {
+          const weight = innerPullStrength * (1 - Math.pow(r / (well.radius / 2), 2));
+          deflectionAngle = weight * maxDeflectionValue * delta;
+      } else {
+          const normalizedDistance = (r - (well.radius / 2)) / (well.radius / 2);
+          const weight = outerPullStrength * (1 - normalizedDistance * normalizedDistance);
+          deflectionAngle = weight * maxDeflectionValue * delta;
+      }
+      return rotateVector(baseDir, deflectionAngle);
+    }
+    
+    // Modified updateMover: When an agent is waiting and then starts moving (state transition), reinitialize the gravity timer based on whether its origin is inside a well.
+    function updateMover(obj, dt) {
+      // If waiting, count down timer and then transition to moving.
+      if (obj.state.startsWith("wait")) {
+          obj.timer += dt;
+          if (obj.timer >= 1) {
+              // Transition from waiting to moving:
+              obj.state = (obj.state === "waitAtRegister") ? "toOrigin" : "toRegister";
+              // Reinitialize gravity timer based on whether the origin is inside any well.
+              let originInside = false;
+              for (let i = 0; i < gravityWells.length; i++) {
+                  const well = gravityWells[i];
+                  if (Math.hypot(obj.origin.x - well.position.x, obj.origin.y - well.position.y) < well.radius) {
+                      originInside = true;
+                      obj.activeWellIndex = i;
+                      break;
+                  }
+              }
+              obj.gravityTimer = originInside ? 300 : defaultTimer;
+              obj.gravityDisabled = false;
+              obj.timer = 0;
+          }
+          return;
+      }
+      
+      // If moving, detect wells.
+      let currentWells = [];
+      for (let i = 0; i < gravityWells.length; i++) {
+          const well = gravityWells[i];
+          if (Math.hypot(obj.pos.x - well.position.x, obj.pos.y - well.position.y) < well.radius) {
+              currentWells.push(i);
+          }
+      }
+      
+      const target = (obj.state === "toRegister") ? obj.destination : obj.origin;
+      const dx = target.x - obj.pos.x;
+      const dy = target.y - obj.pos.y;
+      const dist = Math.hypot(dx, dy);
+      const baseDir = (dist > 0) ? { x: dx/dist, y: dy/dist } : { x: 0, y: 0 };
+      
+      if (currentWells.length === 0) {
+          obj.activeWellIndex = undefined;
+          obj.gravityTimer = null;
+          obj.gravityDisabled = false;
+      } else {
+          let bestIndex = currentWells[0];
+          let bestDot = -Infinity;
+          for (let index of currentWells) {
+              const well = gravityWells[index];
+              const vx = well.position.x - obj.pos.x;
+              const vy = well.position.y - obj.pos.y;
+              const vdist = Math.hypot(vx, vy);
+              if (vdist === 0) continue;
+              const normDir = { x: vx / vdist, y: vy / vdist };
+              const dot = baseDir.x * normDir.x + baseDir.y * normDir.y;
+              if (dot > bestDot) {
+                  bestDot = dot;
+                  bestIndex = index;
+              }
+          }
+          if (obj.activeWellIndex !== bestIndex && obj.wellChangeCooldown <= 0) {
+              obj.activeWellIndex = bestIndex;
+              obj.wellChangeCooldown = 300; // 300 ms cooldown
+              const originDist = Math.hypot(obj.origin.x - gravityWells[bestIndex].position.x,
+                                            obj.origin.y - gravityWells[bestIndex].position.y);
+              obj.gravityTimer = (originDist < gravityWells[bestIndex].radius) ? 300 : defaultTimer;
+              obj.gravityDisabled = false;
+          } else if (!obj.gravityDisabled) {
+              obj.gravityTimer -= dt * 1000;
+              if (obj.gravityTimer <= 0) {
+                  obj.gravityTimer = 0;
+                  obj.gravityDisabled = true;
+              }
+          }
+      }
+      
+      if (obj.wellChangeCooldown > 0) {
+          obj.wellChangeCooldown -= dt * 1000;
+      }
+      
+      obj.prevWells = currentWells.slice();
+      
+      const moveDist = obj.speed * dt;
+      if (dist <= moveDist) {
+          obj.pos.x = target.x;
+          obj.pos.y = target.y;
+          obj.state = (obj.state === "toRegister") ? "waitAtRegister" : "waitAtOrigin";
+          obj.timer = 0;
+      } else {
+          const baseDir2 = { x: dx/dist, y: dy/dist };
+          const newDir = (disableGravityWells || obj.gravityDisabled) ? baseDir2 : computeDeflectedDirection(obj, baseDir2);
+          obj.pos.x += newDir.x * moveDist;
+          obj.pos.y += newDir.y * moveDist;
+      }
+    }
+    
+    function updateAll(dt) {
+      updateMover(bob, dt);
+      updateMover(worker, dt);
+      updateMover(sara, dt);
+      updateMover(pete, dt);
+      updateMover(sam, dt);
+    }
+    
+    // ----- 6a. WOLF DRAWING FUNCTIONS -----
+    function drawWolfIcon(cx, cy, size) {
+      ctx.save();
+      ctx.translate(cx, cy);
+      ctx.fillStyle = "gray";
+      ctx.beginPath();
+      ctx.arc(0, 0, size, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "darkgray";
+      ctx.beginPath();
+      ctx.moveTo(-size * 0.6, -size * 0.4);
+      ctx.lineTo(-size * 0.2, -size * 1.0);
+      ctx.lineTo(0, -size * 0.4);
+      ctx.closePath();
+      ctx.fill();
+      ctx.beginPath();
+      ctx.moveTo(size * 0.6, -size * 0.4);
+      ctx.lineTo(size * 0.2, -size * 1.0);
+      ctx.lineTo(0, -size * 0.4);
+      ctx.closePath();
+      ctx.fill();
+      ctx.fillStyle = "red";
+      ctx.beginPath();
+      ctx.arc(-size * 0.3, -size * 0.1, size * 0.1, 0, Math.PI * 2);
+      ctx.arc(size * 0.3, -size * 0.1, size * 0.1, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+    
+    function drawWolfPack() {
+      wolfPack.forEach(wolf => {
+          drawWolfIcon(wolf.x, wolf.y, 15);
+      });
+    }
+    
+    // ----- 6. DRAWING FUNCTIONS (Decorative Elements, Agents, etc.) -----
+    function drawFishingRod() {
+      ctx.save();
+      ctx.strokeStyle = "#AAAAAA";
+      ctx.lineWidth = 4;
+      const startX = mapWidth / 2 - 250, startY = 80;
+      ctx.beginPath();
+      ctx.moveTo(startX, startY);
+      ctx.quadraticCurveTo(startX + 100, startY - 100, startX + 200, startY);
+      ctx.stroke();
+      ctx.fillStyle = "#666666";
+      ctx.beginPath();
+      ctx.arc(startX, startY, 10, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = "#000000";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(startX + 200, startY);
+      ctx.lineTo(startX + 210, startY + 30);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(startX + 210, startY + 30, 3, 0, Math.PI, false);
+      ctx.stroke();
+      ctx.restore();
+    }
+    
+    function drawLeftBlob() {
+      ctx.save();
+      const points = [
+          { x: 150, y: 850 }, { x: 250, y: 830 }, { x: 320, y: 900 },
+          { x: 300, y: 980 }, { x: 220, y: 1050 }, { x: 140, y: 1020 },
+          { x: 80,  y: 920 }, { x: 100, y: 860 }
+      ];
+      ctx.fillStyle = "#8B4513";
+      ctx.strokeStyle = "white";
+      ctx.lineWidth = 10;
+      drawSmoothBlob(points);
+      ctx.fill();
+      ctx.stroke();
+      ctx.restore();
+    }
+    
+    // ----- New Right Blob (Moved more toward the centre, different shape, bigger) -----
+    function drawRightBlob() {
+      ctx.save();
+      const points = [
+          { x: 950, y: 500 },
+          { x: 1050, y: 480 },
+          { x: 1120, y: 520 },
+          { x: 1100, y: 600 },
+          { x: 1000, y: 650 },
+          { x: 900,  y: 600 },
+          { x: 880,  y: 520 }
+      ];
+      ctx.fillStyle = "#8B4513";
+      ctx.strokeStyle = "white";
+      ctx.lineWidth = 10;
+      drawSmoothBlob(points);
+      ctx.fill();
+      ctx.stroke();
+      ctx.restore();
+    }
+    
+    // ----- Adjusted Potato Cash Register (Centered on the right blob) -----
+    function drawPotatoCashRegister() {
+      ctx.save();
+      ctx.fillStyle = "#333";
+      // Center the register on the blob using potatoCenter = (1000, 553)
+      ctx.fillRect(1000 - 30, 553 - 30, 60, 60);
+      drawPotatoIcon(1000, 553, 60 * 0.6);
+      ctx.restore();
+    }
+    
+    function drawFishCashRegister() {
+      ctx.save();
+      ctx.fillStyle = "#333";
+      ctx.fillRect(130, 920, 60, 60);
+      drawFishIcon(160, 950, 60 * 0.6);
+      ctx.restore();
+    }
+    
+    function drawFishIcon(cx, cy, size) {
+      ctx.save();
+      ctx.fillStyle = "blue";
+      ctx.beginPath();
+      ctx.ellipse(cx, cy, size * 0.4, size * 0.2, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.moveTo(cx - size * 0.4, cy);
+      ctx.lineTo(cx - size * 0.6, cy - size * 0.2);
+      ctx.lineTo(cx - size * 0.6, cy + size * 0.2);
+      ctx.closePath();
+      ctx.fill();
+      ctx.fillStyle = "white";
+      ctx.beginPath();
+      ctx.arc(cx + size * 0.2, cy - size * 0.05, size * 0.05, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+    
+    function drawPotatoIcon(cx, cy, size) {
+      ctx.save();
+      ctx.fillStyle = "#D2B48C";
+      ctx.beginPath();
+      ctx.ellipse(cx, cy, size * 0.35, size * 0.25, 0.3, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#8B4513";
+      ctx.beginPath();
+      ctx.arc(cx - size * 0.1, cy - size * 0.05, size * 0.05, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(cx + size * 0.1, cy + size * 0.05, size * 0.04, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(cx, cy + size * 0.1, size * 0.05, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+    
+    // ----- Draw the main road (smooth single cubic Bézier curve) -----
+    function drawRoads() {
+      ctx.beginPath();
+      ctx.moveTo(mainRoad.start.x, mainRoad.start.y);
+      ctx.bezierCurveTo(mainRoad.cp1.x, mainRoad.cp1.y,
+                        mainRoad.cp2.x, mainRoad.cp2.y,
+                        mainRoad.end.x, mainRoad.end.y);
+      ctx.lineWidth = roadWidth;
+      ctx.strokeStyle = roadColor;
+      ctx.lineJoin = "round";
+      ctx.lineCap = "round";
+      ctx.stroke();
+    }
+    
+    function drawPineTree(x, y) {
+      const scale = 5;
+      ctx.fillStyle = "#8B4513";
+      const trunkWidth = 4 * scale, trunkHeight = 10 * scale;
+      ctx.fillRect(x - trunkWidth / 2, y, trunkWidth, trunkHeight);
+      ctx.fillStyle = "#0B6623";
+      ctx.beginPath();
+      ctx.moveTo(x, y - 15 * scale);
+      ctx.lineTo(x - 10 * scale, y + 5 * scale);
+      ctx.lineTo(x + 10 * scale, y + 5 * scale);
+      ctx.closePath();
+      ctx.fill();
+    }
+    
+    function drawSmoothBlob(points) {
+      const len = points.length;
+      if (len < 2) return;
+      ctx.beginPath();
+      let prev = points[len - 1];
+      let midX = (prev.x + points[0].x) / 2;
+      let midY = (prev.y + points[0].y) / 2;
+      ctx.moveTo(midX, midY);
+      for (let i = 0; i < len; i++) {
+          const cur = points[i];
+          const next = points[(i + 1) % len];
+          midX = (cur.x + next.x) / 2;
+          midY = (cur.y + next.y) / 2;
+          ctx.quadraticCurveTo(cur.x, cur.y, midX, midY);
+      }
+      ctx.closePath();
+    }
+    
+    function drawPlayer() {
+      ctx.fillStyle = "white";
+      ctx.beginPath();
+      ctx.arc(player.x, player.y, player.radius, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    
+    function drawAgent(agent) {
+      ctx.save();
+      ctx.fillStyle = agent.color;
+      ctx.beginPath();
+      ctx.arc(agent.pos.x, agent.pos.y, 10, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "white";
+      ctx.font = "20px sans-serif";
+      ctx.textAlign = "center";
+      ctx.fillText(agent.name, agent.pos.x, agent.pos.y - 15);
+      ctx.restore();
+    }
+    
+    // ----- Draw wells and the inner pull circle (dotted) -----
+    function drawWells() {
+      gravityWells.forEach(well => {
+          if (showGravityWellRadius) {
+              ctx.save();
+              ctx.strokeStyle = "white";
+              ctx.lineWidth = 3;
+              ctx.beginPath();
+              ctx.arc(well.position.x, well.position.y, well.radius, 0, Math.PI * 2);
+              ctx.stroke();
+              ctx.restore();
+          }
+          if (showInnerCircle) {
+              ctx.save();
+              ctx.strokeStyle = "yellow";
+              ctx.lineWidth = 2;
+              ctx.setLineDash([5, 5]);
+              ctx.beginPath();
+              ctx.arc(well.position.x, well.position.y, well.radius / 2, 0, Math.PI * 2);
+              ctx.stroke();
+              ctx.restore();
+          }
+          ctx.save();
+          ctx.fillStyle = "tan";
+          ctx.beginPath();
+          ctx.arc(well.position.x, well.position.y, 8, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
+      });
+    }
+    
+    // ----- Draw Doors (Spawned with F) -----
+    function drawDoors() {
+      doors.forEach(door => {
+        ctx.save();
+        ctx.fillStyle = "#654321"; // Dark brown
+        ctx.fillRect(door.position.x - door.size / 2, door.position.y - door.size / 2, door.size, door.size);
+        ctx.restore();
+      });
+    }
+    
+    // ----- Draw Moving Agents for Pete and Sam -----
+    function drawMovingAgents() {
+      drawAgent(pete);
+      drawAgent(sam);
+    }
+    
+    // ----- 7. MAIN GAME LOOP: UPDATE & RENDER -----
+    function update(dt) {
+      let moveX = 0, moveY = 0;
+      if (keys['w']) moveY -= 1;
+      if (keys['s']) moveY += 1;
+      if (keys['a']) moveX -= 1;
+      if (keys['d']) moveX += 1;
+      let len = Math.hypot(moveX, moveY);
+      if (len > 0) { moveX /= len; moveY /= len; }
+      player.x += moveX * player.speed * dt;
+      player.y += moveY * player.speed * dt;
+      player.x = Math.max(0, Math.min(mapWidth, player.x));
+      player.y = Math.max(0, Math.min(mapHeight, player.y));
+      camera.x = player.x; camera.y = player.y;
+      
+      updateMover(bob, dt);
+      updateMover(worker, dt);
+      updateMover(sara, dt);
+      updateMover(pete, dt);
+      updateMover(sam, dt);
+    }
+    
+    function render() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.save();
+      ctx.translate(canvas.width / 2, canvas.height / 2);
+      ctx.scale(camera.zoom, camera.zoom);
+      ctx.translate(-camera.x, -camera.y);
+      
+      ctx.fillStyle = "#8FDE40";
+      ctx.fillRect(0, 0, mapWidth, mapHeight);
+      
+      drawFishingRod();
+      drawLeftBlob();
+      drawRightBlob();
+      drawFishCashRegister();
+      drawPotatoCashRegister();
+      
+      // Draw the main road.
+      drawRoads();
+      
+      pineCluster.trees.forEach(tree => { drawPineTree(tree.x, tree.y); });
+      
+      drawWolfPack();
+      
+      drawWells();
+      drawDoors();
+      drawMovingAgents();
+      
+      drawPlayer();
+      drawAgent(bob);
+      drawAgent(worker);
+      drawAgent(sara);
+      
+      ctx.restore();
+      
+      ctx.save();
+      ctx.resetTransform();
+      ctx.font = "20px sans-serif";
+      ctx.fillStyle = "white";
+      let yPos = canvas.height - 80;
+      if (bob.gravityTimer !== null) { ctx.fillText("Bob Timer: " + Math.floor(bob.gravityTimer) + " ms", 10, yPos); yPos += 25; }
+      if (worker.gravityTimer !== null) { ctx.fillText("Worker Timer: " + Math.floor(worker.gravityTimer) + " ms", 10, yPos); yPos += 25; }
+      if (sara.gravityTimer !== null) { ctx.fillText("Sara Timer: " + Math.floor(sara.gravityTimer) + " ms", 10, yPos); }
+      ctx.restore();
+    }
+    
+    function gameLoop(time) {
+      const dt = (time - lastTime) / 1000;
+      lastTime = time;
+      update(dt);
+      render();
+      requestAnimationFrame(gameLoop);
+    }
+    requestAnimationFrame(gameLoop);
+    
+    // ----- 8. GRAVITY WELL & DOOR SPAWNING, DRAGGING, & DELETION -----
+    window.addEventListener("keydown", e => {
+      const key = e.key.toLowerCase();
+      if (key === "c") {
+          // Spawn a gravity well.
+          const worldX = camera.x - (canvas.width / (2 * camera.zoom)) + currentMouse.x / camera.zoom;
+          const worldY = camera.y - (canvas.height / (2 * camera.zoom)) + currentMouse.y / camera.zoom;
+          gravityWells.push({ position: { x: worldX, y: worldY }, radius: defaultWellRadius, strength: 100 });
+      } else if (key === "f") {
+          // Spawn a door (dark brown cube) at the current mouse position.
+          const doorX = camera.x - (canvas.width / (2 * camera.zoom)) + currentMouse.x / camera.zoom;
+          const doorY = camera.y - (canvas.height / (2 * camera.zoom)) + currentMouse.y / camera.zoom;
+          doors.push({ position: { x: doorX, y: doorY }, size: 50 });
+      } else if (key === "x") {
+          // Toggle both the outer well circle and the inner pull (dotted) circle.
+          showGravityWellRadius = !showGravityWellRadius;
+          showInnerCircle = !showInnerCircle;
+      }
+    });
+    
+    canvas.addEventListener("mousedown", e => {
+      if (e.button === 0) {
+          const rect = canvas.getBoundingClientRect();
+          const mouseX = e.clientX - rect.left;
+          const mouseY = e.clientY - rect.top;
+          const worldX = camera.x - (canvas.width / (2 * camera.zoom)) + mouseX / camera.zoom;
+          const worldY = camera.y - (canvas.height / (2 * camera.zoom)) + mouseY / camera.zoom;
+          for (let i = 0; i < gravityWells.length; i++) {
+              const well = gravityWells[i];
+              if (Math.hypot(well.position.x - worldX, well.position.y - worldY) < 20) {
+                  draggingWell = i;
+                  break;
+              }
+          }
+      }
+    });
+    
+    canvas.addEventListener("mouseup", e => {
+      if (e.button === 0) draggingWell = null;
+    });
+    
+    canvas.addEventListener("contextmenu", e => {
+      e.preventDefault();
+      const rect = canvas.getBoundingClientRect();
+      const mouseX = e.clientX - rect.left;
+      const mouseY = e.clientY - rect.top;
+      const worldX = camera.x - (canvas.width / (2 * camera.zoom)) + mouseX / camera.zoom;
+      const worldY = camera.y - (canvas.height / (2 * camera.zoom)) + mouseY / camera.zoom;
+      for (let i = 0; i < gravityWells.length; i++) {
+          const well = gravityWells[i];
+          if (Math.hypot(well.position.x - worldX, well.position.y - worldY) < 20) {
+              gravityWells.splice(i, 1);
+              break;
+          }
+      }
+    });
+  </script>
+</body>
+</html>
