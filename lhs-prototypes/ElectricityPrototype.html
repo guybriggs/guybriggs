@@ -1,0 +1,421 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>House & Electrical Line Construction Prototype</title>
+  <!-- Include p5.js library from CDN -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.2/p5.js"></script>
+  <style>
+    /* Remove default margin/padding to let the canvas fill the window */
+    body {
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      position: relative;
+    }
+    /* Style for the pop-up context menu (for spawning items on walls) */
+    #context-menu {
+      position: absolute;
+      display: none;
+      background: #fff;
+      border: 1px solid #ccc;
+      padding: 5px;
+      z-index: 10;
+      font-family: sans-serif;
+    }
+    /* Display the buttons vertically */
+    #context-menu button {
+      display: block;
+      margin: 5px 0;
+      cursor: pointer;
+      width: 100%;
+    }
+  </style>
+</head>
+<body>
+  <!-- The pop-up context menu for spawning items on walls -->
+  <div id="context-menu">
+    <button id="solar">Solar Panel</button>
+    <button id="battery">Battery</button>
+    <button id="transformer">Transformer</button>
+  </div>
+
+  <script>
+    // --------------------------
+    // EXISTING HOUSE & ITEM CODE
+    // --------------------------
+    let houses = [];             // Completed houses (walls)
+    let items = [];              // Spawned items (solar, battery, transformer)
+    let currentHouse = null;     // House being drawn
+    const CLOSE_THRESHOLD = 20;  // For closing a house shape
+    const WALL_CLICK_THRESHOLD = 20;  // For detecting a wall click
+
+    // For context menu on wall-clicks:
+    let menuSpawnLocation = null;
+    let ignoreNextClick = false;
+    const contextMenu = document.getElementById("context-menu");
+
+    // --------------------------
+    // NEW ELECTRICAL LINE CODE
+    // --------------------------
+    let currentLine = null;      // Currently drawn (in-progress) electrical line
+    let lines = [];              // Completed electrical lines
+    // Increase the distance threshold by 4× (originally 50, now 200)
+    const LINE_POINT_THRESHOLD = 200;
+    const ENDPOINT_THRESHOLD = 30; // Pixels to snap to a valid endpoint
+
+    // Parameters for the power line decorations:
+    const POLE_HEIGHT = 40;      // Height of the brown line (vertical pole)
+    const POLE_WIDTH = 20;       // Width of the small grey horizontal pole
+    const POLE_THICKNESS = 4;    // Thickness for drawing the vertical pole
+
+    // --------------------------
+    // SETUP
+    // --------------------------
+    function setup() {
+      createCanvas(windowWidth, windowHeight);
+      background(150, 255, 150);
+
+      // Set wall drawing properties: thick and white.
+      strokeWeight(32);
+      stroke(255);
+      noFill();
+
+      // Attach event listeners to the context menu buttons.
+      document.getElementById("solar").addEventListener("click", () => spawnItem("solar"));
+      document.getElementById("battery").addEventListener("click", () => spawnItem("battery"));
+      document.getElementById("transformer").addEventListener("click", () => spawnItem("transformer"));
+    }
+
+    // --------------------------
+    // DRAW LOOP
+    // --------------------------
+    function draw() {
+      background(150, 255, 150);
+
+      // --- Draw completed houses (walls) ---
+      for (let house of houses) {
+        if (house.complete && house.vertices.length > 2) {
+          fill(150, 75, 0);  // brown floor
+          beginShape();
+          for (let v of house.vertices) {
+            vertex(v.x, v.y);
+          }
+          endShape(CLOSE);
+          noFill();
+        }
+        // Use thick white stroke for walls:
+        stroke(255);
+        strokeWeight(32);
+        beginShape();
+        for (let v of house.vertices) {
+          vertex(v.x, v.y);
+        }
+        endShape();
+      }
+
+      // --- Draw current house being drawn (if any) ---
+      if (currentHouse) {
+        stroke(255);
+        strokeWeight(32);
+        beginShape();
+        for (let v of currentHouse.vertices) {
+          vertex(v.x, v.y);
+        }
+        if (currentHouse.drawing) {
+          vertex(mouseX, mouseY);
+        }
+        endShape();
+      }
+
+      // --- Draw spawned items ---
+      for (let item of items) {
+        push();
+        noStroke();
+        if (item.type === "solar") {
+          fill(0, 0, 255);  // blue
+          rectMode(CENTER);
+          rect(item.x, item.y, 40, 40);
+        } else if (item.type === "battery") {
+          fill(128);      // grey
+          rectMode(CENTER);
+          rect(item.x, item.y, 20, 40);
+        } else if (item.type === "transformer") {
+          fill(245, 245, 220);  // beige
+          rectMode(CENTER);
+          rect(item.x, item.y, 30, 20);
+        }
+        pop();
+      }
+
+      // --- Draw completed electrical lines (in black) ---
+      for (let lineObj of lines) {
+        stroke(0);
+        strokeWeight(4);
+        noFill();
+        beginShape();
+        for (let pt of lineObj.points) {
+          vertex(pt.x, pt.y);
+        }
+        endShape();
+
+        // For each locked point, draw the power line pole decoration.
+        for (let pt of lineObj.points) {
+          drawPowerPole(pt);
+        }
+      }
+
+      // --- Draw current (in-progress) electrical line (in red) ---
+      if (currentLine) {
+        stroke('red');
+        strokeWeight(4);
+        noFill();
+        beginShape();
+        for (let pt of currentLine.points) {
+          vertex(pt.x, pt.y);
+        }
+        vertex(mouseX, mouseY);
+        endShape();
+
+        // Draw the power pole decoration at each locked point
+        for (let pt of currentLine.points) {
+          drawPowerPole(pt);
+        }
+
+        // --- Draw a fixed-size radial progress indicator around the mouse ---
+        let progress = currentLine.currentDist / LINE_POINT_THRESHOLD;
+        progress = constrain(progress, 0, 1);
+        let circleRadius = 20;
+        noFill();
+        stroke(0);
+        strokeWeight(2);
+        // Draw only the arc outline corresponding to progress.
+        arc(mouseX, mouseY, circleRadius * 2, circleRadius * 2, -HALF_PI, -HALF_PI + TWO_PI * progress);
+        
+        // --- Draw arrow indicators for endpoints ---
+        let types = ["solar", "battery", "transformer"];
+        for (let t of types) {
+          let candidate = getNearestItemOfType(t, currentLine.startItem);
+          if (candidate) {
+            let dir = createVector(candidate.x - mouseX, candidate.y - mouseY);
+            if (dir.mag() > 0) {
+              dir.normalize();
+              dir.mult(20);
+              drawArrow(createVector(mouseX, mouseY), dir);
+            }
+          }
+        }
+      }
+    }
+
+    // --------------------------
+    // MOUSE EVENTS
+    // --------------------------
+    function mousePressed() {
+      if (ignoreNextClick) {
+        ignoreNextClick = false;
+        return;
+      }
+      if (contextMenu.style.display === "block") {
+        return;
+      }
+
+      // --- ELECTRICAL LINE STARTING ---
+      let clickedItem = getItemAt(mouseX, mouseY);
+      if (clickedItem && !clickedItem.connected) {
+        currentLine = {
+          startItem: clickedItem,
+          points: [{ x: clickedItem.x, y: clickedItem.y }],
+          currentDist: 0
+        };
+        return;
+      }
+
+      // --- WALL MENU (for spawning items) ---
+      if (isNearWall(mouseX, mouseY)) {
+        menuSpawnLocation = { x: mouseX, y: mouseY };
+        showContextMenu(mouseX, mouseY);
+        ignoreNextClick = true;
+        return;
+      }
+
+      // Otherwise, start drawing a new house.
+      hideContextMenu();
+      currentHouse = {
+        vertices: [{ x: mouseX, y: mouseY }],
+        drawing: true,
+        complete: false
+      };
+    }
+
+    function mouseDragged() {
+      if (currentHouse && currentHouse.drawing) {
+        currentHouse.vertices.push({ x: mouseX, y: mouseY });
+      }
+
+      if (currentLine) {
+        let lastPt = currentLine.points[currentLine.points.length - 1];
+        let d = dist(mouseX, mouseY, lastPt.x, lastPt.y);
+        currentLine.currentDist = d;
+        if (d >= LINE_POINT_THRESHOLD) {
+          currentLine.points.push({ x: mouseX, y: mouseY });
+          currentLine.currentDist = 0;
+        }
+      }
+    }
+
+    function mouseReleased() {
+      if (currentHouse && currentHouse.drawing) {
+        currentHouse.drawing = false;
+        currentHouse.vertices.push({ x: mouseX, y: mouseY });
+        let first = currentHouse.vertices[0];
+        let last = currentHouse.vertices[currentHouse.vertices.length - 1];
+        if (dist(first.x, first.y, last.x, last.y) < CLOSE_THRESHOLD && currentHouse.vertices.length > 2) {
+          currentHouse.complete = true;
+          currentHouse.vertices[currentHouse.vertices.length - 1] = { ...first };
+        }
+        houses.push(currentHouse);
+        currentHouse = null;
+      }
+
+      if (currentLine) {
+        let endItem = getItemAt(mouseX, mouseY);
+        if (endItem && !endItem.connected && endItem !== currentLine.startItem && dist(mouseX, mouseY, endItem.x, endItem.y) < ENDPOINT_THRESHOLD) {
+          currentLine.points.push({ x: endItem.x, y: endItem.y });
+          currentLine.startItem.connected = true;
+          endItem.connected = true;
+          lines.push(currentLine);
+        }
+        currentLine = null;
+      }
+    }
+
+    // --------------------------
+    // HELPER FUNCTIONS
+    // --------------------------
+
+    // Draws a power pole decoration at a given point.
+    function drawPowerPole(pt) {
+      // Draw the tall brown vertical line:
+      stroke('brown');
+      strokeWeight(POLE_THICKNESS);
+      line(pt.x, pt.y, pt.x, pt.y + POLE_HEIGHT);
+      // Draw the small horizontal grey pole at the bottom:
+      noStroke();
+      fill(128);
+      rectMode(CENTER);
+      rect(pt.x, pt.y + POLE_HEIGHT + 5, POLE_WIDTH, 5);
+    }
+
+    // Returns true if (x, y) is near any wall of any completed house.
+    function isNearWall(x, y) {
+      for (let house of houses) {
+        if (!house.complete || house.vertices.length < 2) continue;
+        for (let i = 0; i < house.vertices.length - 1; i++) {
+          let v1 = house.vertices[i];
+          let v2 = house.vertices[i + 1];
+          if (pointToSegmentDistance(x, y, v1.x, v1.y, v2.x, v2.y) < WALL_CLICK_THRESHOLD) {
+            return true;
+          }
+        }
+        let first = house.vertices[0];
+        let last = house.vertices[house.vertices.length - 1];
+        if (pointToSegmentDistance(x, y, first.x, first.y, last.x, last.y) < WALL_CLICK_THRESHOLD) {
+          return true;
+        }
+      }
+      return false;
+    }
+
+    // Returns the distance from point (px,py) to the segment (x1,y1)-(x2,y2)
+    function pointToSegmentDistance(px, py, x1, y1, x2, y2) {
+      let l2 = (x2 - x1) ** 2 + (y2 - y1) ** 2;
+      if (l2 === 0) return dist(px, py, x1, y1);
+      let t = ((px - x1) * (x2 - x1) + (py - y1) * (y2 - y1)) / l2;
+      t = max(0, min(1, t));
+      let projX = x1 + t * (x2 - x1);
+      let projY = y1 + t * (y2 - y1);
+      return dist(px, py, projX, projY);
+    }
+
+    // Show the context menu at position (x, y)
+    function showContextMenu(x, y) {
+      contextMenu.style.left = x + "px";
+      contextMenu.style.top = y + "px";
+      contextMenu.style.display = "block";
+    }
+
+    // Hide the context menu
+    function hideContextMenu() {
+      contextMenu.style.display = "none";
+      menuSpawnLocation = null;
+    }
+
+    // Spawn an item of the given type at the saved menu location.
+    function spawnItem(type) {
+      if (menuSpawnLocation) {
+        items.push({
+          type: type,
+          x: menuSpawnLocation.x,
+          y: menuSpawnLocation.y,
+          connected: false
+        });
+      }
+      hideContextMenu();
+    }
+
+    // Given a mouse position, return the first item (if any) whose shape contains that point.
+    function getItemAt(mx, my) {
+      for (let item of items) {
+        let radius;
+        if (item.type === "solar") {
+          radius = 20; // half of 40
+        } else if (item.type === "battery") {
+          radius = 20;
+        } else if (item.type === "transformer") {
+          radius = 15;
+        }
+        if (dist(mx, my, item.x, item.y) <= radius) {
+          return item;
+        }
+      }
+      return null;
+    }
+
+    // For a given type (and excluding a given item), find the nearest unconnected item.
+    function getNearestItemOfType(type, excludeItem) {
+      let nearest = null;
+      let minDist = Infinity;
+      for (let item of items) {
+        if (item.type !== type || item === excludeItem || item.connected) continue;
+        let d = dist(mouseX, mouseY, item.x, item.y);
+        if (d < minDist) {
+          minDist = d;
+          nearest = item;
+        }
+      }
+      return nearest;
+    }
+
+    // Draw an arrow starting at "base" (a p5.Vector) with direction and magnitude given by "vec".
+    function drawArrow(base, vec) {
+      push();
+      stroke(0);
+      strokeWeight(2);
+      fill(0);
+      translate(base.x, base.y);
+      line(0, 0, vec.x, vec.y);
+      rotate(vec.heading());
+      let arrowSize = 4;
+      translate(vec.mag() - arrowSize, 0);
+      triangle(0, arrowSize / 2, 0, -arrowSize / 2, arrowSize, 0);
+      pop();
+    }
+
+    // When the window is resized, adjust the canvas.
+    function windowResized() {
+      resizeCanvas(windowWidth, windowHeight);
+    }
+  </script>
+</body>
+</html>
