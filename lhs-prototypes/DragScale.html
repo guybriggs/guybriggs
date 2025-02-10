@@ -1,0 +1,438 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Building Prototype: Scale & Extend Modes with Extra-Smooth Splines and Simplification</title>
+  <style>
+    /* Basic styles for full-window canvas and a fixed control panel */
+    body {
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+    }
+    #controls {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      background: rgba(255,255,255,0.8);
+      padding: 8px;
+      border-radius: 4px;
+      font-family: sans-serif;
+      z-index: 10;
+    }
+    canvas {
+      display: block;
+    }
+  </style>
+</head>
+<body>
+  <!-- Control panel for mode selection -->
+  <div id="controls">
+    <label>
+      <input type="checkbox" id="modeCheckbox">
+      Extend Mode
+    </label>
+  </div>
+  
+  <canvas id="canvas"></canvas>
+  
+  <script>
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+
+    // ---------------------------
+    // Global State & Configuration
+    // ---------------------------
+    // Array of finished buildings; each building is an object:
+    // { shapePoints: [ {x, y}, ... ], closed: true }
+    let buildings = [];
+
+    // Modes for drawing a new building, scaling, or extending.
+    let drawing = false;   // drawing a new building
+    let scaling = false;   // scaling an existing building
+    let extending = false; // extending an existing building
+
+    // For drawing a new building:
+    let points = [];
+
+    // For scaling:
+    let selectedBuilding = null;  // building being scaled
+    let scaleCenter = { x: 0, y: 0 };
+    let initialMouseDistance = 0;
+    let currentScale = 1;
+
+    // For extending:
+    let extendBuilding = null;  // building being extended
+    let extendStart = null;     // point on building where extension started
+    let extendStartIndex = -1;  // index of the vertex (or closest) where extension started
+    let extensionPoints = [];   // points drawn for the extension preview
+
+    // Drawing parameters:
+    const minDistance = 10;    // Minimum movement (in pixels) to record a new point (for new buildings)
+    const snapDistance = 20;   // Distance (in pixels) used for snapping (both for closing a shape and for extension)
+
+    // Line widths:
+    const previewLineWidth = 9; // For preview strokes (drawing new building or extension preview)
+    const finalLineWidth   = 30; // For finished (white) outlines
+
+    // Interaction mode controlled by the checkbox.
+    // "scale" mode is used when Extend Mode is unchecked,
+    // "extend" mode is used when the checkbox is checked.
+    let interactionMode = "scale";
+    const modeCheckbox = document.getElementById("modeCheckbox");
+    modeCheckbox.addEventListener("change", () => {
+      interactionMode = modeCheckbox.checked ? "extend" : "scale";
+    });
+
+    // ---------------------------
+    // Utility Functions
+    // ---------------------------
+    function getMousePos(evt) {
+      const rect = canvas.getBoundingClientRect();
+      return { x: evt.clientX - rect.left, y: evt.clientY - rect.top };
+    }
+
+    // Clear the canvas and draw the background image.
+    function clearCanvas() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = '#99ff33';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+    }
+
+    function distanceBetweenPoints(p1, p2) {
+      const dx = p2.x - p1.x, dy = p2.y - p1.y;
+      return Math.sqrt(dx * dx + dy * dy);
+    }
+
+    // Compute the center (average) of an array of points.
+    function computeCenter(points) {
+      let sumX = 0, sumY = 0;
+      for (const p of points) {
+        sumX += p.x;
+        sumY += p.y;
+      }
+      return { x: sumX / points.length, y: sumY / points.length };
+    }
+
+    // Returns the distance from a point (px,py) to the line segment from p1 to p2.
+    function pointToSegmentDistance(px, py, p1, p2) {
+      const x1 = p1.x, y1 = p1.y, x2 = p2.x, y2 = p2.y;
+      const dx = x2 - x1, dy = y2 - y1;
+      if (dx === 0 && dy === 0) return distanceBetweenPoints({ x: px, y: py }, p1);
+      const t = ((px - x1) * dx + (py - y1) * dy) / (dx * dx + dy * dy);
+      if (t < 0) return distanceBetweenPoints({ x: px, y: py }, p1);
+      if (t > 1) return distanceBetweenPoints({ x: px, y: py }, p2);
+      const projX = x1 + t * dx, projY = y1 + t * dy;
+      return Math.sqrt((px - projX) ** 2 + (py - projY) ** 2);
+    }
+
+    // Returns true if (x,y) is near any segment of the given shape (within threshold).
+    function isOnShape(x, y, shapePoints, closed, threshold) {
+      if (!shapePoints || shapePoints.length < 2) return false;
+      for (let i = 0; i < shapePoints.length - 1; i++) {
+        if (pointToSegmentDistance(x, y, shapePoints[i], shapePoints[i + 1]) <= threshold) {
+          return true;
+        }
+      }
+      if (closed) {
+        if (pointToSegmentDistance(x, y, shapePoints[shapePoints.length - 1], shapePoints[0]) <= threshold) {
+          return true;
+        }
+      }
+      return false;
+    }
+
+    // Given an array of points, returns the index of the vertex closest to pos.
+    function getClosestVertexIndex(points, pos) {
+      let minDist = Infinity, index = -1;
+      for (let i = 0; i < points.length; i++) {
+        const d = distanceBetweenPoints(points[i], pos);
+        if (d < minDist) {
+          minDist = d;
+          index = i;
+        }
+      }
+      return { index, minDist };
+    }
+
+    // --- Point Simplification Functions ---
+    // Calculate perpendicular distance from point p to the line defined by p1 and p2.
+    function perpendicularDistance(p, p1, p2) {
+      // If p1 and p2 are the same, return the distance between p and p1.
+      if (p1.x === p2.x && p1.y === p2.y) return distanceBetweenPoints(p, p1);
+      const num = Math.abs((p2.y - p1.y) * p.x - (p2.x - p1.x) * p.y + p2.x * p1.y - p2.y * p1.x);
+      const den = Math.sqrt((p2.y - p1.y) ** 2 + (p2.x - p1.x) ** 2);
+      return num / den;
+    }
+
+    // Simplify a set of points using a Ramer–Douglas–Peucker–style algorithm.
+    function simplifyPoints(points, epsilon) {
+      if (points.length < 3) return points;
+      let dmax = 0;
+      let index = 0;
+      for (let i = 1; i < points.length - 1; i++) {
+        const d = perpendicularDistance(points[i], points[0], points[points.length - 1]);
+        if (d > dmax) {
+          index = i;
+          dmax = d;
+        }
+      }
+      if (dmax > epsilon) {
+        // Recursive call
+        const recResults1 = simplifyPoints(points.slice(0, index + 1), epsilon);
+        const recResults2 = simplifyPoints(points.slice(index), epsilon);
+        // Combine the results, removing the duplicate point at the join.
+        return recResults1.slice(0, recResults1.length - 1).concat(recResults2);
+      } else {
+        return [points[0], points[points.length - 1]];
+      }
+    }
+
+    // Merge an extension into a polygon.
+    // Replaces the arc between startIdx and endIdx with the extensionPts.
+    function mergePolygon(original, startIdx, endIdx, extensionPts) {
+      if (startIdx > endIdx) {
+        // Swap indices and reverse extension points
+        [startIdx, endIdx] = [endIdx, startIdx];
+        extensionPts = extensionPts.slice().reverse();
+      }
+      // New polygon: vertices 0..startIdx, then extensionPts (skipping first point),
+      // then original vertices from endIdx onward.
+      const newPoly = original.slice(0, startIdx + 1)
+                        .concat(extensionPts.slice(1))
+                        .concat(original.slice(endIdx));
+      return newPoly;
+    }
+
+    // ---------------------------
+    // Drawing Functions with Extra-Smooth Splines
+    // ---------------------------
+    // We use a Catmull–Rom spline algorithm (via cubic Bézier conversion)
+    // to generate smooth curves. To achieve extra-smooth curves (with minimal bumps),
+    // we adjust the control points by dividing by 8 instead of 6.
+    function drawCatmullRomSpline(pts, closed) {
+      if (!pts || pts.length < 2) return;
+      let points = pts;
+      if (closed) {
+        // For closed curves, wrap around: prepend the last point and append the first two points.
+        let ptsExtended = [];
+        ptsExtended.push(points[points.length - 1]);
+        ptsExtended = ptsExtended.concat(points);
+        ptsExtended.push(points[0]);
+        ptsExtended.push(points[1]);
+        ctx.moveTo(ptsExtended[1].x, ptsExtended[1].y);
+        for (let i = 1; i < ptsExtended.length - 2; i++) {
+          const p0 = ptsExtended[i - 1],
+                p1 = ptsExtended[i],
+                p2 = ptsExtended[i + 1],
+                p3 = ptsExtended[i + 2];
+          const cp1 = { x: p1.x + (p2.x - p0.x) / 8, y: p1.y + (p2.y - p0.y) / 8 };
+          const cp2 = { x: p2.x - (p3.x - p1.x) / 8, y: p2.y - (p3.y - p1.y) / 8 };
+          ctx.bezierCurveTo(cp1.x, cp1.y, cp2.x, cp2.y, p2.x, p2.y);
+        }
+      } else {
+        // For open curves, duplicate the first and last points.
+        let ptsExtended = [];
+        ptsExtended.push(points[0]);
+        ptsExtended = ptsExtended.concat(points);
+        ptsExtended.push(points[points.length - 1]);
+        ctx.moveTo(ptsExtended[1].x, ptsExtended[1].y);
+        for (let i = 1; i < ptsExtended.length - 2; i++) {
+          const p0 = ptsExtended[i - 1],
+                p1 = ptsExtended[i],
+                p2 = ptsExtended[i + 1],
+                p3 = ptsExtended[i + 2];
+          const cp1 = { x: p1.x + (p2.x - p0.x) / 8, y: p1.y + (p2.y - p0.y) / 8 };
+          const cp2 = { x: p2.x - (p3.x - p1.x) / 8, y: p2.y - (p3.y - p1.y) / 8 };
+          ctx.bezierCurveTo(cp1.x, cp1.y, cp2.x, cp2.y, p2.x, p2.y);
+        }
+      }
+    }
+
+    // Draw a shape using our Catmull–Rom spline.
+    // If 'closed' is true, fill the shape with brown.
+    function drawShape(shapePoints, closed, lineWidth, strokeStyle) {
+      if (!shapePoints || shapePoints.length < 2) return;
+      ctx.beginPath();
+      drawCatmullRomSpline(shapePoints, closed);
+      if (closed) {
+        ctx.fillStyle = 'brown';
+        ctx.fill();
+      }
+      ctx.strokeStyle = strokeStyle;
+      ctx.lineWidth = lineWidth;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.stroke();
+    }
+
+    // Draw a finished building (brown fill if closed, white outline).
+    function drawBuilding(building) {
+      drawShape(building.shapePoints, building.closed, finalLineWidth, 'white');
+    }
+
+    // Redraw the background and all finished buildings.
+    function redrawAll() {
+      clearCanvas();
+      for (const building of buildings) {
+        drawBuilding(building);
+      }
+    }
+
+    // Draw the preview for a new building (using our extra-smooth spline).
+    function drawPreview() {
+      redrawAll();
+      if (points.length < 2) return;
+      const d = distanceBetweenPoints(points[0], points[points.length - 1]);
+      const previewColor = (d < snapDistance) ? 'green' : 'red';
+      drawShape(points, false, previewLineWidth, previewColor);
+    }
+
+    // Draw an extension preview (as a blue polyline; we leave it unsmoothed for clarity).
+    function drawExtensionPreview() {
+      redrawAll();
+      if (extensionPoints.length < 1) return;
+      ctx.strokeStyle = 'blue';
+      ctx.lineWidth = previewLineWidth;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.beginPath();
+      ctx.moveTo(extensionPoints[0].x, extensionPoints[0].y);
+      for (let i = 1; i < extensionPoints.length; i++) {
+        ctx.lineTo(extensionPoints[i].x, extensionPoints[i].y);
+      }
+      ctx.stroke();
+    }
+
+    // ---------------------------
+    // Mouse Event Handlers
+    // ---------------------------
+    canvas.addEventListener('mousedown', (evt) => {
+      const pos = getMousePos(evt);
+      // First, check if we clicked on an existing building.
+      let buildingClicked = null;
+      for (let b of buildings) {
+        if (isOnShape(pos.x, pos.y, b.shapePoints, b.closed, finalLineWidth / 2)) {
+          buildingClicked = b;
+          break;
+        }
+      }
+      if (buildingClicked) {
+        if (interactionMode === "extend") {
+          // Begin extend mode.
+          extending = true;
+          scaling = false;
+          drawing = false;
+          extendBuilding = buildingClicked;
+          // Find the vertex in the building closest to the click.
+          const { index, minDist } = getClosestVertexIndex(extendBuilding.shapePoints, pos);
+          extendStartIndex = index;
+          extendStart = extendBuilding.shapePoints[index];
+          extensionPoints = [extendStart];  // initialize extension preview with start point
+        } else {
+          // Scale mode.
+          scaling = true;
+          extending = false;
+          drawing = false;
+          selectedBuilding = buildingClicked;
+          scaleCenter = computeCenter(selectedBuilding.shapePoints);
+          initialMouseDistance = distanceBetweenPoints(pos, scaleCenter);
+          currentScale = 1;
+        }
+      } else {
+        // Clicked on empty area: start drawing a new building.
+        drawing = true;
+        scaling = false;
+        extending = false;
+        selectedBuilding = null;
+        points = [];
+        points.push(pos);
+        drawPreview();
+      }
+    });
+
+    canvas.addEventListener('mousemove', (evt) => {
+      const pos = getMousePos(evt);
+      if (drawing) {
+        const lastPos = points[points.length - 1];
+        if (distanceBetweenPoints(pos, lastPos) >= minDistance) {
+          points.push(pos);
+          drawPreview();
+        }
+      } else if (scaling && selectedBuilding) {
+        // Scale mode: use radial drag.
+        const currentDistance = distanceBetweenPoints(pos, scaleCenter);
+        const deltaDistance = currentDistance - initialMouseDistance;
+        // For a 25% increase in scale, drag 10% of the canvas width outward.
+        const threshold = 0.1 * canvas.width;
+        const targetScale = 1 + (deltaDistance / threshold) * 0.25;
+        currentScale = targetScale;
+        const newPoints = selectedBuilding.shapePoints.map(p => ({
+          x: scaleCenter.x + (p.x - scaleCenter.x) * currentScale,
+          y: scaleCenter.y + (p.y - scaleCenter.y) * currentScale
+        }));
+        selectedBuilding.shapePoints = newPoints;
+        redrawAll();
+      } else if (extending && extendBuilding) {
+        // Extend mode: add the current mouse position to the extension preview.
+        extensionPoints.push(pos);
+        drawExtensionPreview();
+      }
+    });
+
+    canvas.addEventListener('mouseup', (evt) => {
+      if (drawing) {
+        drawing = false;
+        const pos = getMousePos(evt);
+        // Snap the new building if its last point is near the first.
+        const d = distanceBetweenPoints(pos, points[0]);
+        const closed = (d < snapDistance);
+        if (closed) {
+          points[points.length - 1] = points[0];
+        }
+        // Simplify the collected points before storing the building.
+        const simplifiedPoints = simplifyPoints(points, 15);
+        const newBuilding = { shapePoints: simplifiedPoints.slice(), closed: closed };
+        buildings.push(newBuilding);
+        redrawAll();
+      } else if (scaling) {
+        scaling = false;
+        selectedBuilding = null;
+      } else if (extending) {
+        // End extend mode.
+        extending = false;
+        const pos = getMousePos(evt);
+        // Find the vertex in extendBuilding closest to the current mouse position.
+        const { index: endIndex, minDist } = getClosestVertexIndex(extendBuilding.shapePoints, pos);
+        if (minDist < snapDistance && endIndex !== extendStartIndex) {
+          // Valid extension: snap the extension's last point to the building's vertex.
+          extensionPoints[extensionPoints.length - 1] = extendBuilding.shapePoints[endIndex];
+          // Ensure start index is less than end index; if not, swap and reverse extension.
+          let startIdx = extendStartIndex, endIdx = endIndex;
+          if (startIdx > endIdx) {
+            [startIdx, endIdx] = [endIdx, startIdx];
+            extensionPoints = extensionPoints.slice().reverse();
+          }
+          // Merge: replace the arc from startIdx to endIdx with the drawn extension.
+          const newPolygon = mergePolygon(extendBuilding.shapePoints, startIdx, endIdx, extensionPoints);
+          extendBuilding.shapePoints = newPolygon;
+        }
+        extendBuilding = null;
+        extensionPoints = [];
+        redrawAll();
+      }
+    });
+
+    // ---------------------------
+    // Resize Handling
+    // ---------------------------
+    function resizeCanvas() {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+      redrawAll();
+    }
+    window.addEventListener('resize', resizeCanvas);
+    resizeCanvas();
+  </script>
+</body>
+</html>
