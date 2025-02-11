@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Paint and Erase with White Preview Outline and Player on Top</title>
+  <style>
+    canvas {
+      border: 1px solid #000;
+      display: block;
+      margin: 20px auto;
+      background: #000;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="gameCanvas" width="800" height="600"></canvas>
+  <script>
+    // ---------------------------
+    // Basic Setup and Globals
+    // ---------------------------
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+
+    // Player object (a white circle controlled by WASD)
+    const player = { x: 0, y: 0, radius: 10 };
+    const speed = 3;
+    const keys = {};
+
+    // A pine tree near spawn
+    const pineTree = { x: 50, y: 50, scale: 1 };
+
+    // Brush settings
+    let brushRadius = 30; // Larger brush size
+
+    // Array to store strokes.
+    // Each stroke is an object: { x, y, radius, type } where type is either "paint" or "erase"
+    const strokes = [];
+
+    // Mouse state for painting/erasing and preview (in world coordinates)
+    let mouseWorld = { x: 0, y: 0 };
+    let isPainting = false;
+    let isErasing = false;
+
+    // Outline settings
+    const outlineThickness = 6; // in pixels
+
+    // ---------------------------
+    // Input Handlers
+    // ---------------------------
+    document.addEventListener('keydown', (e) => {
+      if (['KeyW', 'KeyA', 'KeyS', 'KeyD'].includes(e.code)) {
+        keys[e.code] = true;
+      }
+    });
+    document.addEventListener('keyup', (e) => {
+      if (['KeyW', 'KeyA', 'KeyS', 'KeyD'].includes(e.code)) {
+        keys[e.code] = false;
+      }
+    });
+
+    // Update mouseWorld (convert canvas coordinates to world coordinates)
+    canvas.addEventListener('mousemove', (e) => {
+      const rect = canvas.getBoundingClientRect();
+      const mouseX = e.clientX - rect.left;
+      const mouseY = e.clientY - rect.top;
+      // Because the world is translated so that the player is centered:
+      mouseWorld.x = mouseX + player.x - canvas.width / 2;
+      mouseWorld.y = mouseY + player.y - canvas.height / 2;
+    });
+
+    // Prevent the context menu from appearing on right-click.
+    canvas.addEventListener('contextmenu', e => e.preventDefault());
+
+    // On mousedown, record a stroke immediately:
+    canvas.addEventListener('mousedown', (e) => {
+      if (e.button === 0) { // Left-click → paint
+        isPainting = true;
+        strokes.push({ x: mouseWorld.x, y: mouseWorld.y, radius: brushRadius, type: "paint" });
+      } else if (e.button === 2) { // Right-click → erase
+        isErasing = true;
+        strokes.push({ x: mouseWorld.x, y: mouseWorld.y, radius: brushRadius, type: "erase" });
+      }
+    });
+    // On mouseup or leaving the canvas, stop painting/erasing:
+    canvas.addEventListener('mouseup', () => { isPainting = false; isErasing = false; });
+    canvas.addEventListener('mouseout', () => { isPainting = false; isErasing = false; });
+
+    // ---------------------------
+    // Helper Functions
+    // ---------------------------
+    // Threshold a canvas: for each pixel, if its alpha is ≥ threshold, set it to opaque; otherwise, transparent.
+    function thresholdCanvas(canvasElem, threshold) {
+      const ctxT = canvasElem.getContext('2d');
+      const imageData = ctxT.getImageData(0, 0, canvasElem.width, canvasElem.height);
+      const data = imageData.data;
+      for (let i = 0; i < data.length; i += 4) {
+        data[i + 3] = data[i + 3] >= threshold ? 255 : 0;
+      }
+      ctxT.putImageData(imageData, 0, 0);
+    }
+
+    // Dilate a binary mask by drawing it repeatedly with offsets within a circle of given radius,
+    // then subtract the original mask to isolate the border.
+    function getDilatedOutline(maskCanvas, dilation) {
+      const dilatedCanvas = document.createElement('canvas');
+      dilatedCanvas.width = maskCanvas.width;
+      dilatedCanvas.height = maskCanvas.height;
+      const dilatedCtx = dilatedCanvas.getContext('2d');
+      dilatedCtx.clearRect(0, 0, dilatedCanvas.width, dilatedCanvas.height);
+      // Draw the mask at multiple offsets (simulate dilation)
+      for (let dx = -dilation; dx <= dilation; dx++) {
+        for (let dy = -dilation; dy <= dilation; dy++) {
+          if (dx * dx + dy * dy <= dilation * dilation) {
+            dilatedCtx.drawImage(maskCanvas, dx, dy);
+          }
+        }
+      }
+      // Subtract the original crisp mask so only the border remains.
+      dilatedCtx.globalCompositeOperation = 'destination-out';
+      dilatedCtx.drawImage(maskCanvas, 0, 0);
+      dilatedCtx.globalCompositeOperation = 'source-over';
+      return dilatedCanvas;
+    }
+
+    // Draw a pine tree at world coordinates (x,y)
+    function drawPineTree(x, y, scale = 1) {
+      ctx.fillStyle = '#8B4513';
+      ctx.fillRect(x - 5 * scale, y, 10 * scale, 20 * scale);
+      ctx.fillStyle = '#228B22';
+      ctx.beginPath();
+      ctx.moveTo(x - 15 * scale, y);
+      ctx.lineTo(x + 15 * scale, y);
+      ctx.lineTo(x, y - 30 * scale);
+      ctx.closePath();
+      ctx.fill();
+    }
+
+    // ---------------------------
+    // Game Loop Functions
+    // ---------------------------
+    function update() {
+      // Update player movement (WASD)
+      let moveX = 0, moveY = 0;
+      if (keys['KeyW']) moveY -= 1;
+      if (keys['KeyS']) moveY += 1;
+      if (keys['KeyA']) moveX -= 1;
+      if (keys['KeyD']) moveX += 1;
+      if (moveX !== 0 && moveY !== 0) {
+        moveX *= Math.SQRT1_2;
+        moveY *= Math.SQRT1_2;
+      }
+      player.x += moveX * speed;
+      player.y += moveY * speed;
+
+      // Record continuous strokes while painting/erasing
+      if (isPainting) {
+        strokes.push({ x: mouseWorld.x, y: mouseWorld.y, radius: brushRadius, type: "paint" });
+      }
+      if (isErasing) {
+        strokes.push({ x: mouseWorld.x, y: mouseWorld.y, radius: brushRadius, type: "erase" });
+      }
+    }
+
+    function draw() {
+      // Clear the main canvas.
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      // Compute camera offset (to center the player).
+      const offsetX = canvas.width / 2 - player.x;
+      const offsetY = canvas.height / 2 - player.y;
+
+      // ----- Draw World Background and Pine Tree -----
+      ctx.save();
+      ctx.translate(offsetX, offsetY);
+      // Background
+      ctx.fillStyle = '#C6EC47';
+      ctx.fillRect(-5000, -5000, 10000, 10000);
+      // Pine tree
+      drawPineTree(pineTree.x, pineTree.y, pineTree.scale);
+      ctx.restore();
+
+      // ----- Build a Union Mask of All Strokes -----
+      const maskCanvas = document.createElement('canvas');
+      maskCanvas.width = canvas.width;
+      maskCanvas.height = canvas.height;
+      const maskCtx = maskCanvas.getContext('2d');
+      maskCtx.clearRect(0, 0, canvas.width, canvas.height);
+      // Process each stroke in the order they were drawn.
+      for (const stroke of strokes) {
+        // Convert world coordinates to screen coordinates.
+        const screenX = stroke.x + offsetX;
+        const screenY = stroke.y + offsetY;
+        if (stroke.type === "paint") {
+          // Paint stroke: add white.
+          maskCtx.globalCompositeOperation = 'source-over';
+          maskCtx.fillStyle = 'white';
+          maskCtx.beginPath();
+          maskCtx.arc(screenX, screenY, stroke.radius, 0, Math.PI * 2);
+          maskCtx.fill();
+        } else if (stroke.type === "erase") {
+          // Erase stroke: remove white.
+          maskCtx.globalCompositeOperation = 'destination-out';
+          maskCtx.beginPath();
+          maskCtx.arc(screenX, screenY, stroke.radius, 0, Math.PI * 2);
+          maskCtx.fill();
+          maskCtx.globalCompositeOperation = 'source-over';
+        }
+      }
+
+      // ----- Smooth the Mask -----
+      // Draw the union mask with a heavy blur (8px) then threshold it to create a binary mask.
+      const smoothedMaskCanvas = document.createElement('canvas');
+      smoothedMaskCanvas.width = canvas.width;
+      smoothedMaskCanvas.height = canvas.height;
+      const smoothedCtx = smoothedMaskCanvas.getContext('2d');
+      smoothedCtx.filter = 'blur(8px)';
+      smoothedCtx.drawImage(maskCanvas, 0, 0);
+      smoothedCtx.filter = 'none';
+      thresholdCanvas(smoothedMaskCanvas, 128);
+
+      // ----- Generate the Painted Fill (Dark Brown) -----
+      const fillCanvas = document.createElement('canvas');
+      fillCanvas.width = canvas.width;
+      fillCanvas.height = canvas.height;
+      const fillCtx = fillCanvas.getContext('2d');
+      fillCtx.drawImage(smoothedMaskCanvas, 0, 0);
+      fillCtx.globalCompositeOperation = 'source-in';
+      fillCtx.fillStyle = '#8B4513'; // Dark brown fill
+      fillCtx.fillRect(0, 0, canvas.width, canvas.height);
+
+      // ----- Generate the Solid Outline -----
+      const outlineCanvas = getDilatedOutline(smoothedMaskCanvas, outlineThickness);
+
+      // ----- Composite the Fill and Outline onto the Main Canvas -----
+      ctx.drawImage(fillCanvas, 0, 0);
+      ctx.drawImage(outlineCanvas, 0, 0);
+
+      // ----- Draw the Preview (White Outline) -----
+      // The preview shows where the next stroke will be applied.
+      ctx.save();
+      ctx.translate(offsetX, offsetY);
+      ctx.strokeStyle = 'white';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(mouseWorld.x, mouseWorld.y, brushRadius, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+
+      // ----- Finally, Draw the Player on Top -----
+      ctx.save();
+      ctx.translate(offsetX, offsetY);
+      ctx.fillStyle = 'white';
+      ctx.beginPath();
+      ctx.arc(player.x, player.y, player.radius, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+
+    function gameLoop() {
+      update();
+      draw();
+      requestAnimationFrame(gameLoop);
+    }
+    gameLoop();
+  </script>
+</body>
+</html>

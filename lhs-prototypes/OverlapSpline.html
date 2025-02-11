@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Shape Union – Overlap Removal Maintaining Area</title>
+  <style>
+    html, body { margin: 0; padding: 0; overflow: hidden; }
+    #toolbar {
+      position: fixed;
+      top: 10px;
+      left: 10px;
+      background: rgba(255,255,255,0.8);
+      padding: 5px;
+      border-radius: 5px;
+      z-index: 10;
+    }
+    canvas { display: block; background: #f0f0f0; }
+  </style>
+  <!-- ClipperLib is loaded from a CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/clipper-lib@6.4.2/clipper.js"></script>
+</head>
+<body>
+  <div id="toolbar">
+    <label>
+      <input type="checkbox" id="showDots" checked> Show Dots
+    </label>
+  </div>
+  <canvas id="canvas"></canvas>
+  <script>
+    (function() {
+      // --- Configuration ---
+      const clipperScale = 1000;   // Scale factor for ClipperLib (works on integers)
+      const pointSpacing = 5;      // Minimum distance between successive points
+
+      // --- Global Variables ---
+      const canvas = document.getElementById("canvas");
+      const ctx = canvas.getContext("2d");
+      // Each shape is stored as an object with a `points` property (a list of {x, y})
+      let shapes = [];             
+      let currentShape = null;     // The shape currently being drawn
+      let drawing = false;
+      let showPoints = true;       // Show dots by default
+
+      // Checkbox to toggle dot visibility
+      const showDotsCheckbox = document.getElementById("showDots");
+      showDotsCheckbox.addEventListener("change", function() {
+        showPoints = showDotsCheckbox.checked;
+        redraw();
+      });
+
+      // --- Setup Canvas ---
+      function resizeCanvas() {
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+        redraw();
+      }
+      window.addEventListener("resize", resizeCanvas);
+      resizeCanvas();
+
+      // --- Mouse Event Handlers ---
+      canvas.addEventListener("mousedown", (e) => {
+        drawing = true;
+        currentShape = { points: [{ x: e.offsetX, y: e.offsetY }] };
+      });
+
+      canvas.addEventListener("mousemove", (e) => {
+        if (!drawing) return;
+        const last = currentShape.points[currentShape.points.length - 1];
+        if (Math.hypot(e.offsetX - last.x, e.offsetY - last.y) >= pointSpacing) {
+          currentShape.points.push({ x: e.offsetX, y: e.offsetY });
+          redraw();
+          drawPolyline(currentShape.points, "blue");
+          if (showPoints) drawPoints(currentShape.points);
+        }
+      });
+
+      canvas.addEventListener("mouseup", (e) => {
+        if (!drawing) return;
+        drawing = false;
+        currentShape.points.push({ x: e.offsetX, y: e.offsetY });
+        // Close the shape by appending the first point again
+        currentShape.points.push({ ...currentShape.points[0] });
+        shapes.push(currentShape);
+        console.log("New shape created. All shapes:", shapes);
+        currentShape = null;
+        combineOverlappingShapes();
+        redraw();
+      });
+
+      // --- Drawing Functions ---
+      function redraw() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        shapes.forEach(shape => {
+          drawPolygon(shape.points, "black");
+          if (showPoints) drawPoints(shape.points);
+        });
+        // Draw the in-progress shape in blue
+        if (currentShape) {
+          drawPolyline(currentShape.points, "blue");
+          if (showPoints) drawPoints(currentShape.points);
+        }
+      }
+
+      function drawPolygon(points, strokeStyle) {
+        if (!points.length) return;
+        ctx.beginPath();
+        ctx.moveTo(points[0].x, points[0].y);
+        for (let i = 1; i < points.length; i++) {
+          ctx.lineTo(points[i].x, points[i].y);
+        }
+        ctx.strokeStyle = strokeStyle;
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      }
+
+      function drawPolyline(points, strokeStyle) {
+        if (!points.length) return;
+        ctx.beginPath();
+        ctx.moveTo(points[0].x, points[0].y);
+        for (let i = 1; i < points.length; i++) {
+          ctx.lineTo(points[i].x, points[i].y);
+        }
+        ctx.strokeStyle = strokeStyle;
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      }
+
+      // Draw small red dots at each point.
+      function drawPoints(points) {
+        ctx.fillStyle = "red";
+        points.forEach(pt => {
+          ctx.beginPath();
+          ctx.arc(pt.x, pt.y, 3, 0, Math.PI * 2);
+          ctx.fill();
+        });
+      }
+
+      // --- Overlap & Union Functions ---
+      function combineOverlappingShapes() {
+        let changed = true;
+        while (changed) {
+          changed = false;
+          outer: for (let i = 0; i < shapes.length; i++) {
+            for (let j = i + 1; j < shapes.length; j++) {
+              if (doPolygonsOverlap(shapes[i].points, shapes[j].points)) {
+                const unionPoly = unionPolygons(shapes[i].points, shapes[j].points);
+                shapes[i].points = unionPoly;
+                shapes.splice(j, 1);
+                changed = true;
+                console.log("Shapes combined. All shapes:", shapes);
+                break outer;
+              }
+            }
+          }
+        }
+      }
+
+      // --- Modified Union Function with Extra Smoothing ---
+      function unionPolygons(poly1, poly2) {
+        const cp1 = convertToClipperPath(poly1);
+        const cp2 = convertToClipperPath(poly2);
+        const clipper = new ClipperLib.Clipper();
+        clipper.AddPaths([cp1, cp2], ClipperLib.PolyType.ptSubject, true);
+        const solution = new ClipperLib.Paths();
+        clipper.Execute(
+          ClipperLib.ClipType.ctUnion,
+          solution,
+          ClipperLib.PolyFillType.pftNonZero,
+          ClipperLib.PolyFillType.pftNonZero
+        );
+        if (solution.length > 0) {
+          let unionPoly = closePolygon(convertFromClipperPath(solution[0]));
+          // --- Smooth the unioned shape with extra iterations (5 iterations for more smoothing) ---
+          unionPoly = smoothPolygon(unionPoly, 5);
+          return unionPoly;
+        }
+        return poly1;
+      }
+
+      function convertToClipperPath(points) {
+        let pts = points.slice();
+        // Remove duplicate closing point if present.
+        if (pts.length > 1 && distance(pts[0], pts[pts.length - 1]) < 1e-6) pts.pop();
+        return pts.map(pt => ({
+          X: Math.round(pt.x * clipperScale),
+          Y: Math.round(pt.y * clipperScale)
+        }));
+      }
+
+      function convertFromClipperPath(path) {
+        return path.map(pt => ({
+          x: pt.X / clipperScale,
+          y: pt.Y / clipperScale
+        }));
+      }
+
+      function closePolygon(points) {
+        if (points.length && distance(points[0], points[points.length - 1]) > 1e-6) {
+          points.push({ ...points[0] });
+        }
+        return points;
+      }
+
+      function distance(p1, p2) {
+        return Math.hypot(p2.x - p1.x, p2.y - p1.y);
+      }
+
+      // --- Smoothing Functions ---
+      // Smooths a closed polygon using a weighted-average of neighboring vertices.
+      // It also scales the result about its centroid so that the area remains roughly the same.
+      function smoothPolygon(points, iterations = 5) {
+        // Work on a copy without the duplicate closing point (if any)
+        let poly = points.slice();
+        if (poly.length > 1 && distance(poly[0], poly[poly.length - 1]) < 1e-6) {
+          poly.pop();
+        }
+        // Save the original area
+        let originalArea = polygonArea(poly);
+        // Iteratively smooth the polygon
+        for (let iter = 0; iter < iterations; iter++) {
+          let newPoly = [];
+          let n = poly.length;
+          for (let i = 0; i < n; i++) {
+            let prev = poly[(i - 1 + n) % n];
+            let curr = poly[i];
+            let next = poly[(i + 1) % n];
+            // Weighted average: keep most of the current point
+            newPoly.push({
+              x: (prev.x + 4 * curr.x + next.x) / 6,
+              y: (prev.y + 4 * curr.y + next.y) / 6
+            });
+          }
+          poly = newPoly;
+        }
+        // Rescale the smoothed polygon to (approximately) preserve the area.
+        let newArea = polygonArea(poly);
+        if (newArea > 0) {
+          let scale = Math.sqrt(originalArea / newArea);
+          let centroid = polygonCentroid(poly);
+          poly = poly.map(pt => ({
+            x: centroid.x + (pt.x - centroid.x) * scale,
+            y: centroid.y + (pt.y - centroid.y) * scale
+          }));
+        }
+        // Re-close the polygon
+        poly.push({ ...poly[0] });
+        return poly;
+      }
+
+      // Computes the area of a polygon using the shoelace formula.
+      function polygonArea(points) {
+        let area = 0;
+        let n = points.length;
+        for (let i = 0; i < n; i++) {
+          let j = (i + 1) % n;
+          area += points[i].x * points[j].y - points[j].x * points[i].y;
+        }
+        return Math.abs(area) / 2;
+      }
+
+      // Computes the centroid (center of mass) of a polygon.
+      function polygonCentroid(points) {
+        let cx = 0, cy = 0;
+        let area = 0;
+        let n = points.length;
+        for (let i = 0; i < n; i++) {
+          let j = (i + 1) % n;
+          let factor = points[i].x * points[j].y - points[j].x * points[i].y;
+          cx += (points[i].x + points[j].x) * factor;
+          cy += (points[i].y + points[j].y) * factor;
+          area += factor;
+        }
+        area /= 2;
+        cx /= (6 * area);
+        cy /= (6 * area);
+        return { x: cx, y: cy };
+      }
+
+      // --- Overlap Detection ---
+      function doPolygonsOverlap(poly1, poly2) {
+        for (const pt of poly1) {
+          if (pointInPolygon(pt, poly2)) return true;
+        }
+        for (const pt of poly2) {
+          if (pointInPolygon(pt, poly1)) return true;
+        }
+        for (let i = 0; i < poly1.length - 1; i++) {
+          for (let j = 0; j < poly2.length - 1; j++) {
+            if (linesIntersect(poly1[i], poly1[i+1], poly2[j], poly2[j+1])) return true;
+          }
+        }
+        return false;
+      }
+
+      function pointInPolygon(point, poly) {
+        let inside = false;
+        for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+          const xi = poly[i].x, yi = poly[i].y;
+          const xj = poly[j].x, yj = poly[j].y;
+          const intersect = ((yi > point.y) !== (yj > point.y)) &&
+                            (point.x < ((xj - xi) * (point.y - yi)) / ((yj - yi) || 1e-10) + xi);
+          if (intersect) inside = !inside;
+        }
+        return inside;
+      }
+
+      function linesIntersect(p1, p2, p3, p4) {
+        const d1 = direction(p3, p4, p1);
+        const d2 = direction(p3, p4, p2);
+        const d3 = direction(p1, p2, p3);
+        const d4 = direction(p1, p2, p4);
+        if (((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) &&
+            ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0))) {
+          return true;
+        }
+        if (d1 === 0 && onSegment(p3, p4, p1)) return true;
+        if (d2 === 0 && onSegment(p3, p4, p2)) return true;
+        if (d3 === 0 && onSegment(p1, p2, p3)) return true;
+        if (d4 === 0 && onSegment(p1, p2, p4)) return true;
+        return false;
+      }
+
+      function direction(a, b, c) {
+        return (c.x - a.x) * (b.y - a.y) - (c.y - a.y) * (b.x - a.x);
+      }
+
+      function onSegment(a, b, c) {
+        return Math.min(a.x, b.x) <= c.x && c.x <= Math.max(a.x, b.x) &&
+               Math.min(a.y, b.y) <= c.y && c.y <= Math.max(a.y, b.y);
+      }
+    })();
+  </script>
+</body>
+</html>
