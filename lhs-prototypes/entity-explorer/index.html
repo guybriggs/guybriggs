@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Entity Explorer</title>
+  <!-- Include jQuery from a CDN -->
+  <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+  <style>
+    /* Overall page layout */
+    body {
+      margin: 0;
+      font-family: Arial, sans-serif;
+      display: flex;
+      height: 100vh;
+    }
+    /* Sidebar styling */
+    .sidebar {
+      width: 250px;
+      padding: 10px;
+      border-right: 1px solid #ccc;
+      overflow-y: auto;
+    }
+    .sidebar h2 {
+      margin-top: 20px;
+      border-bottom: 1px solid #ccc;
+      padding-bottom: 5px;
+    }
+    /* Content area styling */
+    .content {
+      flex: 1;
+      padding: 20px;
+      overflow-y: auto;
+      position: relative;
+    }
+    /* Button styling */
+    .entity-button {
+      display: block;
+      width: 100%;
+      text-align: left;
+      margin: 4px 0;
+      padding: 6px 10px;
+      border: none;
+      cursor: pointer;
+      font-size: 14px;
+      color: #fff;
+      border-radius: 4px;
+    }
+    /* Colour-coded buttons: Agents = red, Objects = blue, Items = green */
+    .btn-agent { background-color: #d9534f; }
+    .btn-object { background-color: #5bc0de; }
+    .btn-item   { background-color: #5cb85c; }
+    /* Styling for clickable links within descriptions */
+    .entity-link {
+      border: none;
+      cursor: pointer;
+      font-size: 14px;
+      margin: 0 2px;
+      padding: 2px 6px;
+      color: #fff;
+      border-radius: 4px;
+    }
+    /* Same colour-coding applies for links */
+    .btn-agent.entity-link { background-color: #d9534f; }
+    .btn-object.entity-link { background-color: #5bc0de; }
+    .btn-item.entity-link   { background-color: #5cb85c; }
+    /* Info box styling */
+    .info-box {
+      border: 1px solid #ccc;
+      padding: 10px;
+      margin-bottom: 10px;
+      background: #f9f9f9;
+      overflow: auto;
+    }
+    .info-box h3 {
+      margin-top: 0;
+    }
+    /* Large emoji box in info boxes */
+    .emoji-box {
+      float: left;
+      width: 60px;
+      height: 60px;
+      border: 1px solid #ccc;
+      margin-right: 10px;
+      text-align: center;
+      line-height: 60px;
+      font-size: 40px;
+    }
+    /* Container for the text in an info box */
+    .info-content {
+      overflow: hidden;
+    }
+    /* Flowchart styling */
+    .flowchart {
+      text-align: center;
+      margin-top: 10px;
+    }
+    .flowchart .node {
+      display: inline-block;
+      margin: 5px;
+      padding: 5px 10px;
+      border: 1px solid #666;
+      border-radius: 4px;
+      background: #eaeaea;
+    }
+    .flowchart .arrow {
+      display: inline-block;
+      margin: 0 5px;
+      font-size: 18px;
+      vertical-align: middle;
+    }
+  </style>
+</head>
+<body>
+  <div class="sidebar">
+    <h2>Agents</h2>
+    <div id="agentsList"></div>
+    <h2>Objects</h2>
+    <div id="objectsList"></div>
+    <h2>Items</h2>
+    <div id="itemsList"></div>
+  </div>
+  <div class="content">
+    <!-- Container for info boxes -->
+    <label>
+        <input type="checkbox" id="flowchartMode">
+        Flowchart Mode
+      </label>
+    <div id="infoBoxes"></div>
+  </div>
+  
+  <script>
+    var entities = [];         // Array from the JSON file
+    var entitiesByName = {};   // Mapping name => entity
+
+    // Function that creates a clickable link for an entity name.
+    // Displays the emoji alongside the name.
+    function createEntityLink(entityName) {
+      var entity = entitiesByName[entityName];
+      var btnClass = "";
+      if (entity) {
+        if (entity.type === "Agent") {
+          btnClass = "btn-agent";
+        } else if (entity.type === "Object") {
+          btnClass = "btn-object";
+        } else if (entity.type === "Item") {
+          btnClass = "btn-item";
+        }
+      }
+      return '<button class="entity-link ' + btnClass + '" onclick="openInfoBox(\'' + entityName + '\')">' +
+             (entity ? entity.emoji + " " : "") + entityName + '</button>';
+    }
+
+    // Function to generate a simple flowchart representation of the entity's description.
+    function generateFlowChart(entity) {
+  if ($("#flowchartMode").is(":checked")) {
+    // ----- FLOWCHART MODE -----
+    if (entity.type === "Agent") {
+      // Build the action node content using clickable buttons.
+      var actionHTML = "";
+      function appendAction(label, arr) {
+        actionHTML += '<div style="margin-bottom: 5px;">' + label;
+        if (arr && arr.length > 0) {
+          arr.forEach(function(name, index) {
+            actionHTML += createEntityLink(name);
+            if (index < arr.length - 1) {
+              actionHTML += ", ";
+            }
+          });
+        } else {
+          actionHTML += " None";
+        }
+        actionHTML += '</div>';
+      }
+      appendAction("Consumes: ", entity.consumes);
+      appendAction("Creates: ", entity.creates);
+      appendAction("Uses: ", entity.uses);
+      appendAction("Exchanges: ", entity.exchangesFor);
+      appendAction("Moves: ", entity.moves);
+
+      // Build station node content.
+      var stationHTML = "Station: ";
+      if (entity.station) {
+        stationHTML += createEntityLink(entity.station);
+      } else {
+        stationHTML += "None";
+      }
+
+      // Build sources node content.
+      var sourcesHTML = "Sources: ";
+      if (entity.sources && entity.sources.length > 0) {
+        entity.sources.forEach(function(name, index) {
+          sourcesHTML += createEntityLink(name);
+          if (index < entity.sources.length - 1) {
+            sourcesHTML += ", ";
+          }
+        });
+      } else {
+        sourcesHTML += "None";
+      }
+
+      // Create the flowchart container (800x500px)
+      var html = '<div class="flowchart-container" style="position: relative; width:800px; height:500px; border: 1px dashed #ccc;">';
+      
+      // Insert the SVG arrow first so it doesn't block button clicks.
+      // The arrow now curves upward (using control point at 400,20) from (20,120) to (780,120)
+      html += '<svg width="800" height="500" style="position: absolute; top:0; left:0; pointer-events:none;">' +
+                '<defs>' +
+                  '<marker id="arrowhead" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">' +
+                    '<polygon points="0 0, 10 3.5, 0 7" fill="black" />' +
+                  '</marker>' +
+                '</defs>' +
+                '<path d="M20,120 Q400,20 780,120" stroke="black" fill="none" marker-end="url(#arrowhead)"/>' +
+              '</svg>';
+      
+      // Place the Action node at the top center.
+      html += '<div class="flowchart-node action" style="position: absolute; left:50%; top:40px; transform: translateX(-50%); padding:10px; border:1px solid #666; background:#eaeaea; text-align:center;">' +
+                actionHTML +
+              '</div>';
+      
+      // Place the Agent node (main entity) centered.
+      html += '<div class="flowchart-node agent" style="position: absolute; left:50%; top:50%; transform: translate(-50%, -50%); padding:10px; border:1px solid #666; background:#eaeaea; text-align:center;">' +
+                createEntityLink(entity.name) +
+              '</div>';
+      
+      // Place the Station node on the right, vertically centered.
+      html += '<div class="flowchart-node station" style="position: absolute; right:20px; top:50%; transform: translateY(-50%); padding:10px; border:1px solid #666; background:#eaeaea; text-align:center;">' +
+                stationHTML +
+              '</div>';
+      
+      // Place three Sources nodes evenly along the left side.
+      // In a 500px-high container, they appear at approximately 125px, 250px, and 375px.
+      for (var i = 0; i < 3; i++) {
+        var topPos = (i + 1) * 500 / 4;
+        html += '<div class="flowchart-node sources" style="position: absolute; left:20px; top:' + topPos + 'px; padding:10px; border:1px solid #666; background:#eaeaea; text-align:center;">' +
+                  sourcesHTML +
+                '</div>';
+      }
+      
+      html += '</div>'; // End of flowchart container
+      return html;
+    } else {
+      // For non-Agent entities in flowchart mode, fall back to a simpler representation.
+      var nodes = [];
+      nodes.push(createEntityLink(entity.name));
+      if (entity.type === "Object") {
+        if (entity.attracts && entity.attracts.length > 0) {
+          nodes.push("Attracts: " + entity.attracts.map(function(name) {
+            return createEntityLink(name);
+          }).join(", "));
+        }
+      }
+      var html = '<div class="flowchart">';
+      for (var i = 0; i < nodes.length; i++) {
+        html += '<span class="node">' + nodes[i] + '</span>';
+        if (i < nodes.length - 1) {
+          html += '<span class="arrow">→</span>';
+        }
+      }
+      html += '</div>';
+      return html;
+    }
+  } else {
+    // ----- NATURAL LANGUAGE MODE -----
+    var html = '<div class="natural-language-description" style="line-height:1.6em;">';
+    html += createEntityLink(entity.name) + ' (' + entity.type + ')';
+    if (entity.type === "Agent") {
+      html += ' is an Agent. ';
+      if (entity.consumes && entity.consumes.length > 0) {
+        html += 'It consumes ' + entity.consumes.map(function(name) {
+          return createEntityLink(name);
+        }).join(', ') + '. ';
+      }
+      if (entity.creates && entity.creates.length > 0) {
+        html += 'It creates ' + entity.creates.map(function(name) {
+          return createEntityLink(name);
+        }).join(', ') + '. ';
+      }
+      if (entity.uses && entity.uses.length > 0) {
+        html += 'It uses ' + entity.uses.map(function(name) {
+          return createEntityLink(name);
+        }).join(', ') + '. ';
+      }
+      if (entity.exchangesFor && entity.exchangesFor.length > 0) {
+        html += 'It exchanges for ' + entity.exchangesFor.map(function(name) {
+          return createEntityLink(name);
+        }).join(', ') + '. ';
+      }
+      if (entity.moves && entity.moves.length > 0) {
+        html += 'It moves ' + entity.moves.map(function(name) {
+          return createEntityLink(name);
+        }).join(', ') + '. ';
+      }
+      html += 'Station: ' + (entity.station ? createEntityLink(entity.station) : 'None') + '. ';
+      html += 'Sources: ' + (entity.sources && entity.sources.length > 0 ? entity.sources.map(function(name) {
+        return createEntityLink(name);
+      }).join(', ') : 'None') + '.';
+    } else if (entity.type === "Object") {
+      html += ' is an Object. ';
+      if (entity.attracts && entity.attracts.length > 0) {
+        html += 'It attracts ' + entity.attracts.map(function(name) {
+          return createEntityLink(name);
+        }).join(', ') + '. ';
+      }
+    } else if (entity.type === "Item") {
+      html += ' is an Item.';
+    }
+    html += '</div>';
+    return html;
+  }
+}
+
+
+    // Function to create a new info box and append it to the content area.
+    // If there are already 3 info boxes, remove the oldest.
+    function openInfoBox(entityName) {
+      var entity = entitiesByName[entityName];
+      if (!entity) return;
+      
+      // Create the info box element.
+      var $box = $('<div class="info-box" style="display:none;"></div>');
+      
+      // Create a large emoji box (floated to the left).
+      var $emojiBox = $('<div class="emoji-box">' + entity.emoji + '</div>');
+      $box.append($emojiBox);
+      
+      // Create a container for the textual content.
+      var $contentDiv = $('<div class="info-content"></div>');
+      $contentDiv.append('<h3>' + entity.name + ' (' + entity.type + ')</h3>');
+      
+      // Append the flowchart (centered) representing the description.
+      $contentDiv.append(generateFlowChart(entity));
+      
+      // If an "important" string is provided, display it.
+      if (entity.important && entity.important.trim() !== "") {
+        $contentDiv.append('<p class="important">' + entity.important + '</p>');
+      }
+      
+      $box.append($contentDiv);
+      
+      // Append the new info box at the top of #infoBoxes.
+      $("#infoBoxes").prepend($box);
+      $box.slideDown(300);
+      
+      // If more than 3 info boxes are visible, remove the oldest (last one).
+      if ($("#infoBoxes .info-box").length > 3) {
+        $("#infoBoxes .info-box").last().slideUp(300, function() {
+          $(this).remove();
+        });
+      }
+    }
+
+    // Populate the sidebar lists with buttons.
+    function populateSidebar() {
+      $("#agentsList, #objectsList, #itemsList").empty();
+      
+      // Sort entities alphabetically by name.
+      entities.sort(function(a, b) {
+        return a.name.localeCompare(b.name);
+      });
+      
+      entities.forEach(function(entity) {
+        var btnClass = "";
+        if (entity.type === "Agent") btnClass = "btn-agent";
+        else if (entity.type === "Object") btnClass = "btn-object";
+        else if (entity.type === "Item") btnClass = "btn-item";
+        
+        var $btn = $('<button class="entity-button ' + btnClass + '">' + entity.emoji + " " + entity.name + '</button>');
+        $btn.on("click", function() {
+          openInfoBox(entity.name);
+        });
+        
+        if (entity.type === "Agent") {
+          $("#agentsList").append($btn);
+        } else if (entity.type === "Object") {
+          $("#objectsList").append($btn);
+        } else if (entity.type === "Item") {
+          $("#itemsList").append($btn);
+        }
+      });
+    }
+
+    // Load the JSON data and initialize the app.
+    $(document).ready(function() {
+      $.getJSON("data.json", function(data) {
+        entities = data;
+        // Build a lookup table for entities by name.
+        entities.forEach(function(entity) {
+          entitiesByName[entity.name] = entity;
+        });
+        populateSidebar();
+      });
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,101 @@
+[
+    {
+      "name": "Fish Dining Table",
+      "type": "Object",
+      "emoji": "🍽️",
+      "important": "",
+      "attracts": ["Fish Customer"]
+    },
+    {
+      "name": "Fish Customer",
+      "type": "Agent",
+      "emoji": "🐟",
+      "important": "",
+      "consumes": ["Fish"],
+      "station": "Fish Dining Table"
+    },
+    {
+      "name": "Sushi Chef",
+      "type": "Agent",
+      "emoji": "👨‍🍳",
+      "important": "",
+      "uses": ["Fish"],
+      "exchangesFor": ["Sushi"],
+      "sources": ["Fish Delivery Crate"],
+      "station": "Cutting Board"
+    },
+    {
+      "name": "Cutting Board",
+      "type": "Object",
+      "emoji": "🔪",
+      "important": "",
+      "attracts": ["Sushi Chef"]
+    },
+    {
+      "name": "Fish Delivery Crate",
+      "type": "Object",
+      "emoji": "📦",
+      "important": "",
+      "attracts": ["Fish Delivery Guy"]
+    },
+    {
+      "name": "Fisherman",
+      "type": "Agent",
+      "emoji": "🎣",
+      "important": "",
+      "creates": ["Fish"],
+      "sources": [],
+      "station": "Fishing Table"
+    },
+    {
+      "name": "Potato Farmer",
+      "type": "Agent",
+      "emoji": "👨‍🌾",
+      "important": "",
+      "creates": ["Potato"],
+      "sources": [],
+      "station": "Potato Crop"
+    },
+    {
+      "name": "Potato Crop",
+      "type": "Object",
+      "emoji": "🥔",
+      "important": "",
+      "attracts": ["Potato Farmer"]
+    },
+    {
+      "name": "Fishing Table",
+      "type": "Object",
+      "emoji": "🪑",
+      "important": "",
+      "attracts": ["Fisherman"]
+    },
+    {
+      "name": "Fish",
+      "type": "Item",
+      "emoji": "🐟",
+      "important": ""
+    },
+    {
+      "name": "Sushi",
+      "type": "Item",
+      "emoji": "🍣",
+      "important": ""
+    },
+    {
+      "name": "Fish Delivery Guy",
+      "type": "Agent",
+      "emoji": "🚚",
+      "important": "The price above this worker's head may be larger than expected -- that's because it includes the cost to buy the good he delivers.",
+      "moves": ["Fish"],
+      "sources": ["Fishing Table"],
+      "station": "Fish Delivery Crate"
+    },
+    {
+      "name": "Potato",
+      "type": "Item",
+      "emoji": "🥔",
+      "important": ""
+    }
+  ]
+  
