@@ -1,0 +1,1039 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>p5.js Game Prototype: Wind, Potato Field & More</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.2/p5.js"></script>
+    <style>
+      body { margin: 0; overflow: hidden; }
+      /* Fixed commands list at top–left */
+      #commands {
+        position: absolute;
+        top: 10px;
+        left: 10px;
+        background: rgba(255,255,255,0.9);
+        padding: 8px;
+        font-family: monospace;
+        font-size: 14px;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="commands">
+      <div>WASD: Move</div>
+      <div>Mouse Wheel: Zoom</div>
+      <div>1: Sword | 2: Bow</div>
+      <div>Q: Spawn Goblin</div>
+      <div>E: Spawn Coal Deposit</div>
+      <div>R: Spawn Marker & Knight</div>
+      <div>T: Spawn Furnace Marker & Miner</div>
+      <div>Y: Toggle Defender Follow</div>
+    </div>
+    <script>
+      // ================= GLOBAL VARIABLES =================
+      let player = {
+        x: 0, y: 0,
+        stunned: false, stunTimer: 0, knockOffset: 0,
+        // Wind effect variables:
+        windEffect: false, windEffectTimer: 0, windEffectTotal: 0
+      };
+      let zoom = 1.0;
+      let currentWeapon = "sword"; // "sword" or "bow"
+      let swordSwing = null; // {angle, timer, duration}
+      let arrows = []; // arrow projectiles
+
+      // World splines for mountain & ocean
+      let mountainPoints = [];
+      let oceanPoints = [];
+
+      // Coal deposits & collection animations
+      let coalChunks = [];
+      let collectedCoalAnimations = [];
+      let coalInventory = 0; // player's stored coal
+
+      // Particle effects for crumbling coal
+      let particles = [];
+
+      // Goblins array
+      let goblins = [];
+
+      // Stun trail particles (from goblin jumps)
+      let stunTrails = [];
+
+      // Dropped items (coal dropped on ground)
+      let droppedItems = [];
+
+      // Cave entrance on the side of the mountain
+      let caveEntrance;
+
+      // Knight agent
+      let knights = []; // knight objects
+      let knightMarker = null;  // marker spawned via R key
+
+      // Miner agent
+      let miners = []; // miner objects
+      let furnaceMarker = null; // marker spawned via T key
+      let furnaceInventory = 0; // coal deposited by miners
+
+      // Fish agents and fish inventory
+      let fish = [];
+      let fishInventory = 0;
+      let fishAnimations = [];
+
+      // New: Wind gusts (large white lines)
+      let windGusts = [];
+      let windSpawnTimer = 0;  // counts down until next gust spawn
+
+      // New: Potato field & potatoes
+      let potatoFieldPoints = [
+        { x: -600-200, y: 100-200 },
+        { x: -400, y: 50-200 },
+        { x: -200, y: 100-200 },
+        { x: -400-200, y: 150 }
+      ];
+      let potatoes = [];
+      let potatoInventory = 0;
+      let potatoAnimations = [];
+
+      // ================= SETUP =================
+      function setup() {
+        createCanvas(windowWidth, windowHeight);
+
+        // Mountain points
+        mountainPoints = [
+          { x: 150, y: 250 },
+          { x: 200, y: 100 },
+          { x: 300, y: 50 },
+          { x: 400, y: 100 },
+          { x: 450, y: 250 }
+        ];
+        // Ocean points
+        oceanPoints = [
+          { x: -1000, y: 300 },
+          { x: -500, y: 350 },
+          { x: 0, y: 320 },
+          { x: 500, y: 370 },
+          { x: 1000, y: 300 }
+        ];
+
+        spawnCoalChunks();
+        spawnPotatoes();
+
+        caveEntrance = { x: 420, y: 160, w: 40, h: 60 };
+
+        // SPAWN FISH: Create 5 fish in the ocean area.
+        for (let i = 0; i < 5; i++) {
+          fish.push({
+            centerX: random(-500, 500),
+            centerY: random(350, 450),
+            radius: random(20, 50),
+            angle: random(TWO_PI),
+            baseSpeed: random(0.01, 0.03),
+            speedMod: random(30, 60),
+            speedAmplitude: random(0.005, 0.015),
+            size: random(10, 20),
+            x: 0, y: 0
+          });
+        }
+      }
+
+      // ================= DRAW LOOP =================
+      function draw() {
+        background(220);
+
+        // --- Player Movement (WASD) ---
+        if (!player.stunned) {
+          let speed = 5;
+          if (keyIsDown(87)) player.y -= speed;
+          if (keyIsDown(83)) player.y += speed;
+          if (keyIsDown(65)) player.x -= speed;
+          if (keyIsDown(68)) player.x += speed;
+        } else {
+          player.knockOffset = sin(frameCount * 0.5) * 10;
+          player.stunTimer--;
+          if (player.stunTimer <= 0) { player.stunned = false; player.knockOffset = 0; }
+        }
+
+        // --- Update & Spawn Wind Gusts ---
+        if (windSpawnTimer <= 0) { spawnWindGust(); windSpawnTimer = int(random(300, 600)); }
+        windSpawnTimer--;
+        // Update wind gusts
+        for (let i = windGusts.length - 1; i >= 0; i--) {
+          let gust = windGusts[i];
+          gust.x += gust.vx;
+          gust.y += gust.vy;
+          gust.lifetime--;
+          push();
+          stroke(255);
+          strokeWeight(4);
+          line(gust.x, gust.y,
+               gust.x + cos(gust.angle) * gust.length,
+               gust.y + sin(gust.angle) * gust.length);
+          pop();
+          if (gust.lifetime <= 0) { windGusts.splice(i, 1); continue; }
+          // Check collision with player (line-to-point distance)
+          let d = pointLineDistance(player.x, player.y,
+                                    gust.x, gust.y,
+                                    gust.x + cos(gust.angle) * gust.length,
+                                    gust.y + sin(gust.angle) * gust.length);
+          if (d < 20 && !player.windEffect) {
+            player.windEffect = true;
+            player.windEffectTimer = 180;
+            player.windEffectTotal = 180;
+          }
+        }
+
+        // --- WORLD DRAWING & CAMERA TRANSFORM ---
+        push();
+        translate(width / 2, height / 2);
+        scale(zoom);
+        translate(-player.x, -player.y);
+
+        drawOcean();
+
+        // Update & draw fish
+        for (let i = 0; i < fish.length; i++) {
+          let f = fish[i];
+          f.angle += (f.baseSpeed + sin(frameCount / f.speedMod) * f.speedAmplitude);
+          f.x = f.centerX + f.radius * cos(f.angle);
+          f.y = f.centerY + f.radius * sin(f.angle);
+          fill(100, 200, 255);
+          noStroke();
+          ellipse(f.x, f.y, f.size, f.size);
+        }
+
+        drawMountain();
+        drawCaveEntrance();
+
+        // --- Draw Potato Field (brown spline) ---
+        drawPotatoField();
+        // Draw potatoes in the field
+        for (let i = potatoes.length - 1; i >= 0; i--) {
+          let pot = potatoes[i];
+          fill(210, 180, 140);
+          noStroke();
+          ellipse(pot.x, pot.y, 20, 20);
+        }
+
+        // --- Draw coal deposits ---
+        for (let i = coalChunks.length - 1; i >= 0; i--) {
+          let chunk = coalChunks[i];
+          fill(80, 50, 20);
+          noStroke();
+          ellipse(chunk.x, chunk.y, 30, 30);
+          fill(0);
+          ellipse(chunk.x, chunk.y - 25, 10, 10);
+        }
+
+        // --- Draw dropped items (coal) ---
+        for (let i = droppedItems.length - 1; i >= 0; i--) {
+          let item = droppedItems[i];
+          fill(0);
+          noStroke();
+          ellipse(item.x, item.y, 15, 15);
+          if (dist(player.x, player.y, item.x, item.y) < 30) {
+            coalInventory++;
+            droppedItems.splice(i, 1);
+          }
+        }
+
+        // --- Draw markers ---
+        if (knightMarker) {
+          fill(200, 200, 0);
+          noStroke();
+          rectMode(CENTER);
+          rect(knightMarker.x, knightMarker.y, knightMarker.w, knightMarker.h);
+        }
+        if (furnaceMarker) {
+          fill(150, 80, 0);
+          noStroke();
+          rectMode(CENTER);
+          rect(furnaceMarker.x, furnaceMarker.y, furnaceMarker.w, furnaceMarker.h);
+          for (let i = 0; i < furnaceInventory; i++) {
+            fill(0);
+            ellipse(furnaceMarker.x, furnaceMarker.y - furnaceMarker.h/2 - 10 - i * 20, 15, 15);
+          }
+        }
+
+        // --- Optional Grid ---
+        //drawGrid();
+
+        // --- Stun Trails (windless gusts from goblin leaps) ---
+        for (let i = stunTrails.length - 1; i >= 0; i--) {
+          let tri = stunTrails[i];
+          tri.x += tri.vx;
+          tri.y += tri.vy;
+          tri.lifetime--;
+          push();
+          translate(tri.x, tri.y);
+          rotate(tri.angle);
+          fill(255);
+          noStroke();
+          triangle(-tri.size/2, tri.size, tri.size/2, tri.size, 0, 0);
+          pop();
+          if (dist(player.x, player.y, tri.x, tri.y) < 25) {
+            player.stunned = true;
+            player.stunTimer = 120;
+            stunTrails.splice(i, 1);
+          }
+          if (tri.lifetime <= 0) { stunTrails.splice(i, 1); }
+        }
+
+        // --- Arrows ---
+        for (let i = arrows.length - 1; i >= 0; i--) {
+          let arrow = arrows[i];
+          arrow.x += arrow.vx;
+          arrow.y += arrow.vy;
+          arrow.vx *= 0.98;
+          arrow.vy *= 0.98;
+          // Check collision with coal deposits.
+          for (let j = coalChunks.length - 1; j >= 0; j--) {
+            let chunk = coalChunks[j];
+            if (dist(arrow.x, arrow.y, chunk.x, chunk.y) < 20) {
+              spawnParticles(chunk.x, chunk.y);
+              spawnCollectedAnimation(chunk);
+              if (random(1) < 0.2) spawnGoblin();
+              coalChunks.splice(j, 1);
+              arrows.splice(i, 1);
+              break;
+            }
+          }
+          // Check collision with goblins.
+          for (let j = goblins.length - 1; j >= 0; j--) {
+            let g = goblins[j];
+            if (dist(arrow.x, arrow.y, g.x, g.y) < 20) {
+              g.hits++;
+              arrows.splice(i, 1);
+              if (g.hits >= 3) { goblinDeath(g, j); }
+              break;
+            }
+          }
+          // Check collision with fish.
+          for (let j = fish.length - 1; j >= 0; j--) {
+            let f = fish[j];
+            if (dist(arrow.x, arrow.y, f.x, f.y) < f.size/2 + 5) {
+              spawnFishAnimation(f);
+              fish.splice(j, 1);
+              arrows.splice(i, 1);
+              break;
+            }
+          }
+          // Check collision with potatoes.
+          for (let j = potatoes.length - 1; j >= 0; j--) {
+            let pot = potatoes[j];
+            if (dist(arrow.x, arrow.y, pot.x, pot.y) < 20) {
+              spawnPotatoAnimation(pot);
+              potatoes.splice(j, 1);
+              arrows.splice(i, 1);
+              break;
+            }
+          }
+          push();
+          translate(arrow.x, arrow.y);
+          rotate(arrow.angle);
+          fill(50);
+          noStroke();
+          rectMode(CENTER);
+          rect(20, 0, 40, 5);
+          pop();
+        }
+
+        // --- Draw Player ---
+        let windOffset = 0;
+        if (player.windEffect) {
+          let progress = 1 - (player.windEffectTimer / player.windEffectTotal);
+          windOffset = -300 * sin(PI * progress);
+          player.windEffectTimer--;
+          if (player.windEffectTimer <= 0) { player.windEffect = false; }
+        }
+        noStroke();
+        fill(255, 0, 0);
+        ellipse(player.x, player.y - player.knockOffset + windOffset, 50, 50);
+
+        // --- Player Sword Swing ---
+        if (swordSwing) {
+          push();
+          stroke(0);
+          strokeWeight(5);
+          noFill();
+          let progress = 1 - swordSwing.timer / swordSwing.duration;
+          let swingRange = PI / 2;
+          let currentAngle = swordSwing.angle + progress * swingRange;
+          let swordLength = 60;
+          let endX = player.x + swordLength * cos(currentAngle);
+          let endY = player.y + swordLength * sin(currentAngle);
+          line(player.x, player.y, endX, endY);
+          pop();
+          for (let i = coalChunks.length - 1; i >= 0; i--) {
+            let chunk = coalChunks[i];
+            let d = pointLineDistance(chunk.x, chunk.y, player.x, player.y, endX, endY);
+            if (d < 20) {
+              spawnParticles(chunk.x, chunk.y);
+              spawnCollectedAnimation(chunk);
+              if (random(1) < 0.2) spawnGoblin();
+              coalChunks.splice(i, 1);
+            }
+          }
+          for (let i = goblins.length - 1; i >= 0; i--) {
+            let g = goblins[i];
+            let d = pointLineDistance(g.x, g.y, player.x, player.y, endX, endY);
+            if (d < 20) {
+              g.hits++;
+              if (g.hits >= 3) { goblinDeath(g, i); }
+            }
+          }
+          for (let i = fish.length - 1; i >= 0; i--) {
+            let f = fish[i];
+            let d = pointLineDistance(f.x, f.y, player.x, player.y, endX, endY);
+            if (d < 20) {
+              spawnFishAnimation(f);
+              fish.splice(i, 1);
+            }
+          }
+          for (let i = potatoes.length - 1; i >= 0; i--) {
+            let pot = potatoes[i];
+            let d = pointLineDistance(pot.x, pot.y, player.x, player.y, endX, endY);
+            if (d < 20) {
+              spawnPotatoAnimation(pot);
+              potatoes.splice(i, 1);
+            }
+          }
+          swordSwing.timer--;
+          if (swordSwing.timer <= 0) { swordSwing = null; }
+        }
+
+        // --- Goblins (3 HP) ---
+        for (let i = goblins.length - 1; i >= 0; i--) {
+          let goblin = goblins[i];
+          let targetPos = { x: player.x, y: player.y };
+          let targetType = "player";
+          if (miners.length > 0) {
+            let closest = miners[0];
+            let closestDist = dist(goblin.x, goblin.y, closest.x, closest.y);
+            for (let m of miners) {
+              let d = dist(goblin.x, goblin.y, m.x, m.y);
+              if (d < closestDist) { closest = m; closestDist = d; }
+            }
+            targetPos = { x: closest.x, y: closest.y };
+            targetType = "miner";
+          }
+          if (goblin.state === "idle") {
+            let dx = targetPos.x - goblin.x;
+            let dy = targetPos.y - goblin.y;
+            let angle = atan2(dy, dx);
+            goblin.x += cos(angle) * 0.5;
+            goblin.y += sin(angle) * 0.5;
+            goblin.timer--;
+            if (goblin.timer < 30) { goblin.flash = (frameCount % 10) < 5; }
+            if (goblin.timer <= 0) {
+              goblin.state = "jump";
+              goblin.jumpTimer = 10;
+              let jdx = targetPos.x - goblin.x;
+              let jdy = targetPos.y - goblin.y;
+              let jAngle = atan2(jdy, jdx);
+              goblin.jumpAngle = jAngle;
+              goblin.vx = cos(jAngle) * 15;
+              goblin.vy = sin(jAngle) * 15;
+              goblin.trailCooldown = 0;
+            }
+          } else if (goblin.state === "jump") {
+            goblin.x += goblin.vx;
+            goblin.y += goblin.vy;
+            goblin.jumpTimer--;
+            if (goblin.trailCooldown <= 0) {
+              spawnStunTrailParticle(goblin.x, goblin.y, goblin.jumpAngle, -1);
+              spawnStunTrailParticle(goblin.x, goblin.y, goblin.jumpAngle, 1);
+              goblin.trailCooldown = 5;
+            } else { goblin.trailCooldown--; }
+            if (goblin.jumpTimer <= 0) {
+              goblin.state = "idle";
+              goblin.timer = 120;
+              goblin.vx = 0; goblin.vy = 0;
+            }
+          }
+          push();
+          translate(goblin.x, goblin.y);
+          if (goblin.state === "idle" && goblin.timer < 30 && goblin.flash) {
+            fill(255, 0, 0);
+          } else { fill(0, 150, 0); }
+          noStroke();
+          ellipse(0, 0, 30, 30);
+          pop();
+          if (targetType === "player" && dist(goblin.x, goblin.y, player.x, player.y) < 40) {
+            dropPlayerItems();
+            goblins.splice(i, 1);
+          } else if (targetType === "miner") {
+            let targMiner = miners[0];
+            let minD = dist(goblin.x, goblin.y, targMiner.x, targMiner.y);
+            for (let m of miners) {
+              let d = dist(goblin.x, goblin.y, m.x, m.y);
+              if (d < minD) { targMiner = m; minD = d; }
+            }
+            if (minD < 40) {
+              dropMinerItems(targMiner);
+              goblins.splice(i, 1);
+            }
+          }
+        }
+
+        // --- Knights ---
+        for (let i = knights.length - 1; i >= 0; i--) {
+          let knight = knights[i];
+          if (knight.state === "moving") {
+            let dx = knight.targetX - knight.x;
+            let dy = knight.targetY - knight.y;
+            let distToTarget = sqrt(dx * dx + dy * dy);
+            if (distToTarget > 2) {
+              let moveAngle = atan2(dy, dx);
+              knight.x += cos(moveAngle) * 3;
+              knight.y += sin(moveAngle) * 3;
+            } else { knight.state = "idle"; knight.hasHit = false; }
+          } else if (knight.state === "idle") {
+            let target;
+            if (knight.followPlayer) {
+              target = { x: player.x, y: player.y };
+            } else {
+              if (knightMarker) { target = { x: knightMarker.x + 50, y: knightMarker.y }; }
+              else { target = { x: knight.x, y: knight.y }; }
+            }
+            // Check for goblins within 400px
+            let closest = null;
+            let closestDist = 400;
+            for (let g of goblins) {
+              let d = dist(knight.x, knight.y, g.x, g.y);
+              if (d < closestDist) { closest = g; closestDist = d; }
+            }
+            if (closest) {
+              knight.state = "chasing";
+              knight.targetGoblin = closest;
+            } else {
+              if (dist(knight.x, knight.y, target.x, target.y) > 5) {
+                knight.state = "moving";
+                knight.targetX = target.x;
+                knight.targetY = target.y;
+              }
+            }
+          } else if (knight.state === "chasing") {
+            if (knight.targetGoblin) {
+              let dx = knight.targetGoblin.x - knight.x;
+              let dy = knight.targetGoblin.y - knight.y;
+              let distToGoblin = sqrt(dx * dx + dy * dy);
+              if (distToGoblin > 40) {
+                let angle = atan2(dy, dx);
+                knight.x += cos(angle) * 3;
+                knight.y += sin(angle) * 3;
+              } else {
+                knight.state = "attacking";
+                knight.swingTimer = 15;
+                knight.swingAngle = atan2(dy, dx);
+                knight.hasHit = false;
+              }
+            } else { knight.state = "idle"; }
+          } else if (knight.state === "attacking") {
+            knight.swingTimer--;
+            let progress = 1 - knight.swingTimer / 15;
+            let swingRange = PI / 2;
+            let currentAngle = knight.swingAngle + progress * swingRange;
+            let swordLength = 40;
+            let endX = knight.x + swordLength * cos(currentAngle);
+            let endY = knight.y + swordLength * sin(currentAngle);
+            push();
+            stroke(0);
+            strokeWeight(4);
+            line(knight.x, knight.y, endX, endY);
+            pop();
+            if (!knight.hasHit && knight.targetGoblin &&
+                distPointToLine(knight.targetGoblin.x, knight.targetGoblin.y, knight.x, knight.y, endX, endY) < 20) {
+              knight.targetGoblin.hits++;
+              knight.hasHit = true;
+              if (knight.targetGoblin.hits >= 3) { goblinDeath(knight.targetGoblin, goblins.indexOf(knight.targetGoblin)); }
+            }
+            if (knight.swingTimer <= 0) { knight.state = "idle"; knight.targetGoblin = null; }
+          }
+          if (knight.followPlayer) {
+            push();
+            stroke(255,255,0);
+            strokeWeight(3);
+            noFill();
+            ellipse(knight.x, knight.y, 40, 40);
+            pop();
+          }
+          push();
+          translate(knight.x, knight.y);
+          fill(0,0,200);
+          noStroke();
+          ellipse(0,0,30,30);
+          pop();
+        }
+
+        // --- Miners ---
+        for (let i = 0; i < miners.length; i++) {
+          let miner = miners[i];
+          if (miner.state === "seeking") {
+            if (!miner.targetDeposit && coalChunks.length > 0) {
+              miner.targetDeposit = coalChunks[0];
+              let bestDist = dist(miner.x, miner.y, miner.targetDeposit.x, miner.targetDeposit.y);
+              for (let deposit of coalChunks) {
+                let d = dist(miner.x, miner.y, deposit.x, deposit.y);
+                if (d < bestDist) { miner.targetDeposit = deposit; bestDist = d; }
+              }
+            }
+            if (miner.targetDeposit) {
+              let dx = miner.targetDeposit.x - miner.x;
+              let dy = miner.targetDeposit.y - miner.y;
+              let d = sqrt(dx*dx+dy*dy);
+              if (d > 5) {
+                let angle = atan2(dy, dx);
+                miner.x += cos(angle) * 1.5;
+                miner.y += sin(angle) * 1.5;
+              } else {
+                miner.state = "attackingDeposit";
+                miner.swingTimer = 15;
+                miner.swingAngle = atan2(dy, dx);
+              }
+            }
+          } else if (miner.state === "attackingDeposit") {
+            push();
+            stroke(0);
+            strokeWeight(3);
+            let progress = 1 - miner.swingTimer / 15;
+            let swingRange = PI / 2;
+            let currentAngle = miner.swingAngle + progress * swingRange;
+            let swordLength = 40;
+            let endX = miner.x + swordLength * cos(currentAngle);
+            let endY = miner.y + swordLength * sin(currentAngle);
+            line(miner.x, miner.y, endX, endY);
+            pop();
+            miner.swingTimer--;
+            if (miner.swingTimer <= 0) {
+              for (let j = coalChunks.length - 1; j >= 0; j--) {
+                let deposit = coalChunks[j];
+                if (deposit === miner.targetDeposit) {
+                  spawnParticles(deposit.x, deposit.y);
+                  coalChunks.splice(j, 1);
+                  break;
+                }
+              }
+              miner.carriedCoal = 1;
+              miner.state = "returning";
+              miner.targetDeposit = null;
+            }
+          } else if (miner.state === "returning") {
+            if (furnaceMarker) {
+              let dx = furnaceMarker.x - miner.x;
+              let dy = furnaceMarker.y - miner.y;
+              let d = sqrt(dx*dx+dy*dy);
+              if (d > 5) {
+                let angle = atan2(dy, dx);
+                miner.x += cos(angle) * 1.5;
+                miner.y += sin(angle) * 1.5;
+              } else {
+                furnaceInventory += miner.carriedCoal;
+                miner.carriedCoal = 0;
+                miner.state = "seeking";
+              }
+            }
+          } else if (miner.state === "stunned") {
+            miner.stunTimer--;
+            if (miner.stunTimer <= 0) miner.state = "seeking";
+          }
+          push();
+          translate(miner.x, miner.y);
+          fill(255,165,0);
+          noStroke();
+          ellipse(0,0,30,30);
+          if (miner.carriedCoal > 0) { fill(0); ellipse(0,-20,10,10); }
+          pop();
+        }
+
+        pop(); // End world transform
+
+        // --- Draw Player Inventory (above player's head) ---
+        push();
+        let inventoryLengthInUnits = 0;
+        translate(width/2, height/2);
+        // Coal (drawn in column 0)
+        for (let i = 0; i < coalInventory; i++) {
+          fill(0);
+          noStroke();
+          ellipse(0, -50 - i*20, 15, 15);
+        }
+        inventoryLengthInUnits += coalInventory;
+        // Fish (drawn in column 20)
+        for (let i = 0; i < fishInventory; i++) {
+          fill(0,0,255);
+          noStroke();
+          ellipse(0, -50 - i*20 - inventoryLengthInUnits*20, 15, 15);
+        }
+        inventoryLengthInUnits += fishInventory;
+        // Potatoes (drawn in column 40)
+        for (let i = 0; i < potatoInventory; i++) {
+          fill(210,180,140);
+          noStroke();
+          ellipse(0, -50 - i*20 - inventoryLengthInUnits*20, 15, 15);
+        }
+        pop();
+
+        // --- Fish Inventory Animations ---
+        for (let i = fishAnimations.length - 1; i >= 0; i--) {
+          let anim = fishAnimations[i];
+          anim.t += 1/anim.duration;
+          let pos = quadraticBezier(anim.t, anim.start, anim.control, anim.end);
+          fill(anim.color);
+          noStroke();
+          ellipse(pos.x, pos.y, 15, 15);
+          if (anim.t >= 1) { fishAnimations.splice(i, 1); fishInventory++; }
+        }
+
+        // --- Potato Inventory Animations ---
+        for (let i = potatoAnimations.length - 1; i >= 0; i--) {
+          let anim = potatoAnimations[i];
+          anim.t += 1/anim.duration;
+          let pos = quadraticBezier(anim.t, anim.start, anim.control, anim.end);
+          fill(anim.color);
+          noStroke();
+          ellipse(pos.x, pos.y, 15, 15);
+          if (anim.t >= 1) { potatoAnimations.splice(i, 1); potatoInventory++; }
+        }
+
+        // --- UI Overlay (top–right info) ---
+        push();
+        resetMatrix();
+        textAlign(RIGHT, TOP);
+        fill(0);
+        noStroke();
+        textSize(16);
+        let infoY = 20;
+        text("Weapon: " + currentWeapon, width-20, infoY);
+        infoY += 20;
+        text("Player Coal: " + coalInventory, width-20, infoY);
+        infoY += 20;
+        text("Fish: " + fishInventory, width-20, infoY);
+        infoY += 20;
+        text("Potatoes: " + potatoInventory, width-20, infoY);
+        pop();
+
+        // --- Furnace Inventory Text (bottom–right) ---
+        push();
+        resetMatrix();
+        textAlign(RIGHT, BOTTOM);
+        fill(0);
+        noStroke();
+        textSize(18);
+        text("Furnace: " + furnaceInventory, width-20, height-20);
+        pop();
+
+        // --- Collected Coal Animations ---
+        for (let i = collectedCoalAnimations.length - 1; i >= 0; i--) {
+          let anim = collectedCoalAnimations[i];
+          anim.t += 1/anim.duration;
+          let pos = quadraticBezier(anim.t, anim.start, anim.control, anim.end);
+          fill(0);
+          noStroke();
+          ellipse(pos.x, pos.y, 15, 15);
+          if (anim.t >= 1) { collectedCoalAnimations.splice(i,1); coalInventory++; }
+        }
+      }
+
+      // ================= UTILITY FUNCTIONS =================
+      function drawGrid() {
+        stroke(180);
+        let gridSpacing = 50;
+        let left = player.x - width/(2*zoom);
+        let right = player.x + width/(2*zoom);
+        let top = player.y - height/(2*zoom);
+        let bottom = player.y + height/(2*zoom);
+        for(let x = left - (left % gridSpacing); x <= right; x+= gridSpacing)
+          line(x, top, x, bottom);
+        for(let y = top - (top % gridSpacing); y <= bottom; y+= gridSpacing)
+          line(left, y, right, y);
+      }
+      function drawMountain() {
+        noStroke();
+        fill(100,100,100);
+        beginShape();
+        curveVertex(mountainPoints[0].x, mountainPoints[0].y);
+        for(let i=0;i<mountainPoints.length;i++){
+          curveVertex(mountainPoints[i].x, mountainPoints[i].y);
+        }
+        curveVertex(mountainPoints[mountainPoints.length-1].x, mountainPoints[mountainPoints.length-1].y);
+        endShape(CLOSE);
+      }
+      function drawOcean() {
+        noStroke();
+        fill(100,150,255);
+        beginShape();
+        curveVertex(oceanPoints[0].x, oceanPoints[0].y);
+        for(let i=0;i<oceanPoints.length;i++){
+          curveVertex(oceanPoints[i].x, oceanPoints[i].y);
+        }
+        curveVertex(oceanPoints[oceanPoints.length-1].x, oceanPoints[oceanPoints.length-1].y);
+        vertex(oceanPoints[oceanPoints.length-1].x,1000);
+        vertex(oceanPoints[0].x,1000);
+        endShape(CLOSE);
+      }
+      function drawCaveEntrance() {
+        fill(30);
+        noStroke();
+        ellipse(caveEntrance.x, caveEntrance.y, caveEntrance.w, caveEntrance.h);
+      }
+      function drawPotatoField() {
+        noStroke();
+        fill(139,69,19);
+        beginShape();
+        for (let pt of potatoFieldPoints) {
+          curveVertex(pt.x, pt.y);
+        }
+        endShape(CLOSE);
+      }
+      function worldToScreen(x,y) {
+        return { x: (x - player.x)*zoom + width/2, y: (y - player.y)*zoom + height/2 };
+      }
+      function screenToWorld(sx, sy) {
+        return { x: (sx - width/2)/zoom + player.x, y: (sy - height/2)/zoom + player.y };
+      }
+      function quadraticBezier(t, p0, p1, p2) {
+        let u = 1-t;
+        let x = u*u*p0.x + 2*u*t*p1.x + t*t*p2.x;
+        let y = u*u*p0.y + 2*u*t*p1.y + t*t*p2.y;
+        return {x, y};
+      }
+      function pointLineDistance(px,py,x1,y1,x2,y2) {
+        let dx = x2-x1, dy = y2-y1;
+        if(dx===0 && dy===0)return dist(px,py,x1,y1);
+        let t = ((px-x1)*dx+(py-y1)*dy)/(dx*dx+dy*dy);
+        t = constrain(t, 0, 1);
+        let projX = x1 + t*dx, projY = y1 + t*dy;
+        return dist(px,py,projX,projY);
+      }
+      function distPointToLine(px,py,x1,y1,x2,y2) { return pointLineDistance(px,py,x1,y1,x2,y2); }
+
+      // Animate a coal icon flying to player's head.
+      function spawnCollectedAnimation(chunk) {
+        let startPos = worldToScreen(chunk.x, chunk.y);
+        let stackIndex = coalInventory + collectedCoalAnimations.length;
+        let target = { x: width/2, y: height/2 - 50 - stackIndex*20 };
+        let midX = (startPos.x+target.x)/2, midY = min(startPos.y, target.y)-50;
+        let control = { x: midX, y: midY };
+        let anim = { start: startPos, control: control, end: target, t: 0, duration: 60 };
+        collectedCoalAnimations.push(anim);
+      }
+      // Animate a fish icon (blue) flying to inventory.
+      function spawnFishAnimation(fishObj) {
+        let startPos = worldToScreen(fishObj.x, fishObj.y);
+        let stackIndex = fishInventory + fishAnimations.length;
+        let target = { x: width/2, y: height/2 - 50 - stackIndex*20 };
+        let midX = (startPos.x+target.x)/2, midY = min(startPos.y, target.y)-50;
+        let control = { x: midX, y: midY };
+        let anim = { start: startPos, control: control, end: target, t: 0, duration: 60, color: color(0,0,255) };
+        fishAnimations.push(anim);
+      }
+      // Animate a potato icon (beige) flying to inventory.
+      function spawnPotatoAnimation(potato) {
+        let startPos = worldToScreen(potato.x, potato.y);
+        let stackIndex = potatoInventory + potatoAnimations.length;
+        let target = { x: width/2, y: height/2 - 50 - stackIndex*20 };
+        let midX = (startPos.x+target.x)/2, midY = min(startPos.y, target.y)-50;
+        let control = { x: midX, y: midY };
+        // Use a beige color.
+        let anim = { start: startPos, control: control, end: target, t: 0, duration: 60, color: color(210,180,140) };
+        potatoAnimations.push(anim);
+      }
+      // Spawn larger particles.
+      function spawnParticles(x, y) {
+        let numParticles = 30;
+        for (let i=0; i<numParticles; i++){
+          let angle = random(TWO_PI);
+          let speed = random(1,3);
+          let particle = {
+            x: x, y: y,
+            vx: cos(angle)*speed,
+            vy: sin(angle)*speed,
+            life: 0, maxLife: 60,
+            size: random(12,24)
+          };
+          particles.push(particle);
+        }
+      }
+      // Spawn a goblin at the cave entrance.
+      function spawnGoblin() {
+        let goblin = {
+          x: caveEntrance.x, y: caveEntrance.y,
+          state: "idle", timer: 120, jumpTimer: 0,
+          vx: 0, vy: 0, jumpAngle: 0,
+          trailCooldown: 0, flash: false, hits: 0
+        };
+        goblins.push(goblin);
+      }
+      // Spawn a stun trail particle.
+      function spawnStunTrailParticle(x,y,jumpAngle, side) {
+        let offsetDist = 10;
+        let px = x + side * offsetDist * cos(jumpAngle+HALF_PI);
+        let py = y + side * offsetDist * sin(jumpAngle+HALF_PI);
+        let speed = 1;
+        let vx = side * speed * cos(jumpAngle+HALF_PI);
+        let vy = side * speed * sin(jumpAngle+HALF_PI);
+        let forwardSpeed = 0.5;
+        vx += forwardSpeed * cos(jumpAngle);
+        vy += forwardSpeed * sin(jumpAngle);
+        let particle = {
+          x: px, y: py, vx: vx, vy: vy,
+          lifetime: 120, size: 20,
+          angle: jumpAngle + (side*radians(45))
+        };
+        stunTrails.push(particle);
+      }
+      // Spawn a wind gust (large white line).
+      function spawnWindGust() {
+        // Spawn from the left of the current view.
+        let x = player.x - width;
+        let y = player.y + random(-300, 300);
+        let angle = 0; // horizontal right
+        let length = random(300,600);
+        let speed = 3;
+        let vx = speed, vy = 0;
+        let lifetime = 300;
+        windGusts.push({ x, y, angle, length, vx, vy, lifetime });
+      }
+      // Spawn a knight from offscreen toward the marker.
+      function spawnKnight(targetX, targetY) {
+        let knight = {
+          x: player.x - width/2 - 50, y: targetY,
+          targetX: targetX + 50, targetY: targetY,
+          state: "moving", swingTimer: 0, swingAngle: 0, hasHit: false,
+          targetGoblin: null, followPlayer: false
+        };
+        knights.push(knight);
+      }
+      // Spawn a miner from offscreen aimed at the furnace.
+      function spawnMiner(furnaceX, furnaceY) {
+        let miner = {
+          x: player.x - width/2 - 50, y: furnaceY,
+          state: "seeking", targetDeposit: null,
+          swingTimer: undefined, swingAngle: 0,
+          carriedCoal: 0, stunTimer: 0
+        };
+        miners.push(miner);
+      }
+      // When a goblin dies, drop a coal item.
+      function goblinDeath(goblin, index) {
+        droppedItems.push({ x: goblin.x, y: goblin.y });
+        goblins.splice(index, 1);
+      }
+      // If the player is touched by a goblin, drop their coal.
+      function dropPlayerItems() {
+        let count = coalInventory;
+        for (let i = 0; i < count; i++) {
+          let angle = random(TWO_PI);
+          let radius = random(30,60);
+          let item = { x: player.x + cos(angle)*radius, y: player.y + sin(angle)*radius };
+          droppedItems.push(item);
+        }
+        coalInventory = 0;
+        collectedCoalAnimations = [];
+      }
+      // If a miner is touched by a goblin, drop its carried coal.
+      function dropMinerItems(miner) {
+        let count = miner.carriedCoal;
+        for (let i = 0; i < count; i++) {
+          let angle = random(TWO_PI);
+          let radius = random(30,60);
+          let item = { x: miner.x + cos(angle)*radius, y: miner.y + sin(angle)*radius };
+          droppedItems.push(item);
+        }
+        miner.carriedCoal = 0;
+        miner.state = "stunned";
+        miner.stunTimer = 60;
+      }
+      // Spawn several coal deposits around the mountain base.
+      function spawnCoalChunks() {
+        let numChunks = floor(random(6,9));
+        let baseCenter = {
+          x: (mountainPoints[0].x + mountainPoints[mountainPoints.length-1].x) / 2,
+          y: (mountainPoints[0].y + mountainPoints[mountainPoints.length-1].y) / 2
+        };
+        for (let i = 0; i < numChunks; i++) {
+          let angle = random(TWO_PI);
+          let radius = random(30,80);
+          let chunk = {
+            x: baseCenter.x + cos(angle)*radius,
+            y: baseCenter.y + sin(angle)*radius
+          };
+          coalChunks.push(chunk);
+        }
+      }
+      // Spawn potatoes in the potato field.
+      function spawnPotatoes() {
+        for (let i = 0; i < 8; i++) {
+          let x = random(-700, -300);
+          let y = random(-150, 0);
+          potatoes.push({ x, y });
+        }
+      }
+      // ================= INPUT HANDLERS =================
+      function mouseWheel(event) {
+        zoom += event.delta * -0.001;
+        zoom = constrain(zoom, 0.1, 5);
+        return false;
+      }
+      function mousePressed() {
+        if (mouseButton === LEFT) {
+          let dx = mouseX - width/2, dy = mouseY - height/2;
+          let angle = atan2(dy, dx);
+          if (currentWeapon === "sword") {
+            if (!swordSwing) { swordSwing = { angle: angle, timer: 15, duration: 15 }; }
+          } else if (currentWeapon === "bow") {
+            let arrowSpeed = 20;
+            let arrow = {
+              x: player.x, y: player.y,
+              vx: cos(angle)*arrowSpeed, vy: sin(angle)*arrowSpeed,
+              angle: angle
+            };
+            arrows.push(arrow);
+          }
+        }
+      }
+      function keyPressed() {
+        if (key === "1") { currentWeapon = "sword"; }
+        else if (key === "2") { currentWeapon = "bow"; }
+        else if (key === "q" || key === "Q") { spawnGoblin(); }
+        else if (key === "e" || key === "E") {
+          let worldPos = screenToWorld(mouseX, mouseY);
+          coalChunks.push({ x: worldPos.x, y: worldPos.y });
+        }
+        else if (key === "r" || key === "R") {
+          let worldPos = screenToWorld(mouseX, mouseY);
+          knightMarker = { x: worldPos.x, y: worldPos.y, w: 40, h: 40 };
+          spawnKnight(knightMarker.x, knightMarker.y);
+        }
+        else if (key === "t" || key === "T") {
+          let worldPos = screenToWorld(mouseX, mouseY);
+          furnaceMarker = { x: worldPos.x, y: worldPos.y, w: 40, h: 40 };
+          spawnMiner(furnaceMarker.x, furnaceMarker.y);
+        }
+        else if (key === "y" || key === "Y") {
+          // Toggle follow mode for the nearest knight within 50px
+          let nearestKnight = null;
+          let nearestDist = 50;
+          for (let knight of knights) {
+            let d = dist(knight.x, knight.y, player.x, player.y);
+            if (d < nearestDist) { nearestKnight = knight; nearestDist = d; }
+          }
+          if (nearestKnight) { nearestKnight.followPlayer = !nearestKnight.followPlayer; }
+        }
+      }
+      function windowResized() { resizeCanvas(windowWidth, windowHeight); }
+
+      // Auto spawn some stuff
+      
+      setTimeout(function() {
+
+
+        let worldPos2 = { x: -300, y: 200 };
+        furnaceMarker = { x: worldPos2.x, y: worldPos2.y, w: 40, h: 40 };
+        spawnMiner(furnaceMarker.x, furnaceMarker.y);
+      }, 100);
+
+    </script>
+  </body>
+</html>
