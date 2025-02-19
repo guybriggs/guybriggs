@@ -1,0 +1,1082 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>2D JS Game - No Dispatch Agents</title>
+  <style>
+    body { margin: 0; padding: 0; overflow: hidden; }
+    #gameContainer { display: flex; height: 100vh; }
+    #panel {
+      width: 220px;
+      background-color: #f0f0f0;
+      padding: 10px;
+      box-sizing: border-box;
+      border-right: 1px solid #ccc;
+    }
+    #inspector {
+      width: 220px;
+      background-color: #fafafa;
+      border-top: 1px solid #ccc;
+      overflow-y: auto;
+      height: 40vh;
+    }
+    #inspectorTable {
+      width: 100%;
+      border-collapse: collapse;
+    }
+    #inspectorTable td, #inspectorTable th {
+      border: 1px solid #ccc;
+      padding: 4px;
+      font-size: 14px;
+    }
+    #gameCanvas {
+      flex-grow: 1;
+      background-color: #ddd;
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+    button {
+      width: 100%;
+      margin-bottom: 5px;
+      padding: 10px;
+      font-size: 14px;
+      cursor: pointer;
+    }
+    .inlineBtn {
+      width: 30px;
+      margin: 0 2px;
+      padding: 5px;
+    }
+  </style>
+</head>
+<body>
+  <div id="gameContainer">
+    <!-- Control panel for placing objects -->
+    <div id="panel">
+      <div><strong>Fish Buildings</strong></div>
+      <button data-type="fishSource">Fish Source</button>
+      <button data-type="fishStockpile">Fish Stockpile</button>
+      <button data-type="fishDispatch">Fish Dispatch</button>
+      <button data-type="fishReceiver">Fish Receiver</button>
+
+      <hr/>
+
+      <div><strong>Potato Buildings</strong></div>
+      <button data-type="potatoSource">Potato Source</button>
+      <button data-type="potatoStockpile">Potato Stockpile</button>
+      <button data-type="potatoDispatch">Potato Dispatch</button>
+      <button data-type="potatoReceiver">Potato Receiver</button>
+
+      <hr/>
+
+      <div><strong>Converters & Dispatch</strong></div>
+      <button data-type="fishAndChipsConverter">Fish & Chips Converter</button>
+      <button data-type="fishAndChipsDispatch">Fish & Chips Dispatch</button>
+
+      <hr/>
+
+      <div><strong>Consumers</strong></div>
+      <button data-type="fishConsumer">Fish Consumer</button>
+      <button data-type="fishAndChipsConsumer">Fish & Chips Consumer</button>
+
+      <hr/>
+
+      <button id="toggleMoneyBtn">Toggle Money Display</button>
+
+      <!-- ADDED OR MODIFIED: Two new toggle buttons -->
+      <button id="toggleNameBtn">Toggle Name Display</button>
+      <button id="toggleCostRevenueBtn">Toggle Cost/Revenue Display</button>
+      <!-- END: Additional toggles -->
+
+      <div id="inspector">
+        <table id="inspectorTable">
+          <thead>
+            <tr>
+              <th>Type</th>
+              <th>Value</th>
+              <th>Edit</th>
+            </tr>
+          </thead>
+          <tbody>
+            <!-- Populated dynamically -->
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <!-- Main game canvas -->
+    <canvas id="gameCanvas"></canvas>
+  </div>
+
+  <script>
+    ////////////////////////////////////////
+    // CANVAS SETUP & RESIZING
+    ////////////////////////////////////////
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+
+    function adjustCanvasSize() {
+      const dpr = window.devicePixelRatio || 1;
+      const rect = canvas.getBoundingClientRect();
+      canvas.width = rect.width * dpr;
+      canvas.height = rect.height * dpr;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+    window.addEventListener('resize', adjustCanvasSize);
+    adjustCanvasSize();
+
+    ////////////////////////////////////////
+    // GLOBAL GAME STATE
+    ////////////////////////////////////////
+
+    // Rooms (rectangles) each with a money wallet
+    const rooms = []; // { x, y, width, height, money }
+
+    // Buildings: sources, stockpiles, dispatches, receivers, converters, consumers
+    const gameObjects = [];
+
+    // Agents with AI
+    const agents = [];
+
+    // Particles for fade-out visuals (e.g. consumer “eats” an item)
+    const particles = []; // each: { x, y, life, maxLife, size }
+
+    // Player
+    const player = {
+      x: canvas.clientWidth / 2,
+      y: canvas.clientHeight / 2,
+      size: 10,
+      speed: 2,
+    };
+
+    // Key state
+    const keys = {};
+    window.addEventListener('keydown', e => { keys[e.key.toLowerCase()] = true; });
+    window.addEventListener('keyup',   e => { keys[e.key.toLowerCase()] = false; });
+
+    // Toggles:
+    let showMoney = true;
+    let showNames = false;         // ADDED OR MODIFIED
+    let showCostRevenue = true;  // ADDED OR MODIFIED
+
+    // UI panel setup
+    const toggleMoneyBtn = document.getElementById('toggleMoneyBtn');
+    toggleMoneyBtn.addEventListener('click', () => {
+      showMoney = !showMoney;
+      console.log("Money display set to:", showMoney);
+    });
+
+    // ADDED OR MODIFIED: Listeners for new toggles
+    const toggleNameBtn = document.getElementById('toggleNameBtn');
+    toggleNameBtn.addEventListener('click', () => {
+      showNames = !showNames;
+      console.log("Name display set to:", showNames);
+    });
+
+    const toggleCostRevenueBtn = document.getElementById('toggleCostRevenueBtn');
+    toggleCostRevenueBtn.addEventListener('click', () => {
+      showCostRevenue = !showCostRevenue;
+      console.log("Cost/Revenue display set to:", showCostRevenue);
+    });
+    // END: Additional toggles
+
+    const buttons = document.querySelectorAll('#panel button');
+    let currentSelectedType = null;
+    buttons.forEach(btn => {
+      // skip the toggleMoneyBtn, toggleNameBtn, toggleCostRevenueBtn
+      if (btn.id === 'toggleMoneyBtn' || btn.id === 'toggleNameBtn' || btn.id === 'toggleCostRevenueBtn') return;
+      btn.addEventListener('click', () => {
+        currentSelectedType = btn.getAttribute('data-type');
+        console.log("Selected type:", currentSelectedType);
+      });
+    });
+
+    
+    ////////////////////////////////////////
+    // INSPECTOR UI
+    ////////////////////////////////////////
+    const inspectorTableBody = document.querySelector('#inspectorTable tbody');
+    let hoveredBuilding = null;
+    let hoveredMouse = { x: 0, y: 0 };
+
+    function renderInspector() {
+      inspectorTableBody.innerHTML = ''; // clear existing rows
+      for (const obj of gameObjects) {
+        let agentForObj = null;
+        if (obj.objectClass === 'stockpile' || obj.objectClass === 'converter') {
+          agentForObj = agents.find(a => a.assignedObject === obj);
+          if (agentForObj && agentForObj.laborCost !== undefined) {
+            addInspectorRow({
+              label: obj.type + " (LaborCost)",
+              value: agentForObj.laborCost,
+              buildingRef: obj,
+              agentRef: agentForObj,
+              propName: 'laborCost'
+            });
+          }
+        }
+        if (obj.objectClass === 'receiver' && obj.reservation !== undefined) {
+          addInspectorRow({
+            label: obj.type + " (Reservation)",
+            value: obj.reservation,
+            buildingRef: obj,
+            propName: 'reservation'
+          });
+        }
+        if (obj.objectClass === 'dispatch' && obj.modifier !== undefined) {
+          addInspectorRow({
+            label: obj.type + " (Modifier)",
+            value: obj.modifier,
+            buildingRef: obj,
+            propName: 'modifier'
+          });
+        }
+        if (obj.objectClass === 'consumer' && obj.consumerPrice !== undefined) {
+          addInspectorRow({
+            label: obj.type + " (Price)",
+            value: obj.consumerPrice,
+            buildingRef: obj,
+            propName: 'consumerPrice'
+          });
+        }
+      }
+    }
+
+    function addInspectorRow({ label, value, buildingRef, agentRef = null, propName }) {
+      const row = document.createElement('tr');
+
+      const tdLabel = document.createElement('td');
+      tdLabel.textContent = label;
+      row.appendChild(tdLabel);
+
+      const tdValue = document.createElement('td');
+      tdValue.textContent = value;
+      row.appendChild(tdValue);
+
+      const tdButtons = document.createElement('td');
+      const minusBtn = document.createElement('button');
+      minusBtn.textContent = '−';
+      minusBtn.className = 'inlineBtn';
+      minusBtn.onclick = () => {
+        changeValue(buildingRef, agentRef, propName, -1);
+      };
+      const plusBtn = document.createElement('button');
+      plusBtn.textContent = '+';
+      plusBtn.className = 'inlineBtn';
+      plusBtn.onclick = () => {
+        changeValue(buildingRef, agentRef, propName, +1);
+      };
+      tdButtons.appendChild(minusBtn);
+      tdButtons.appendChild(plusBtn);
+
+      row.appendChild(tdButtons);
+
+      row.addEventListener('mousemove', e => {
+        hoveredBuilding = buildingRef;
+        hoveredMouse.x = e.pageX;
+        hoveredMouse.y = e.pageY;
+      });
+      row.addEventListener('mouseleave', e => {
+        if (hoveredBuilding === buildingRef) {
+          hoveredBuilding = null;
+        }
+      });
+
+      inspectorTableBody.appendChild(row);
+    }
+
+    function changeValue(buildingRef, agentRef, propName, delta) {
+      if (agentRef && agentRef[propName] !== undefined) {
+        agentRef[propName] += delta;
+      } else if (buildingRef && buildingRef[propName] !== undefined) {
+        buildingRef[propName] += delta;
+      }
+      renderInspector();
+    }
+
+    let isDrawingRoom = false;
+    let roomStart = null;
+    let currentRoomRect = null;
+
+    ////////////////////////////////////////
+    // MOUSE EVENT HANDLERS
+    ////////////////////////////////////////
+    function getMousePos(e) {
+      const rect = canvas.getBoundingClientRect();
+      return {
+        x: e.clientX - rect.left,
+        y: e.clientY - rect.top
+      };
+    }
+
+    canvas.addEventListener('mousedown', (e) => {
+      const { x: mouseX, y: mouseY } = getMousePos(e);
+
+      if (e.shiftKey) {
+        // Draw a room
+        isDrawingRoom = true;
+        roomStart = { x: mouseX, y: mouseY };
+        currentRoomRect = { x: mouseX, y: mouseY, width: 0, height: 0 };
+      } else if (currentSelectedType) {
+        // Place a building
+        const { objectClass, itemType } = parseObjectType(currentSelectedType);
+        const newObj = {
+          x: mouseX,
+          y: mouseY,
+          width: 20,
+          height: 20,
+          type: currentSelectedType,
+          objectClass,
+          itemType,
+          room: null,
+          storedItems: 0,
+          capacity: (objectClass === 'stockpile' || objectClass === 'converter') ? 10 : 1,
+          hasItem: false,
+          lastMoneyChange: 0 // ADDED OR MODIFIED: track last cost/revenue
+        };
+
+        if (objectClass === 'stockpile' || objectClass === 'converter') {
+          newObj.money = 0;
+        }
+        if (objectClass === 'dispatch') {
+          newObj.modifier = Math.floor(Math.random() * 20) + 1;
+        }
+        if (objectClass === 'receiver') {
+          newObj.reservation = Math.floor(Math.random() * 20) + 1;
+        }
+        if (objectClass === 'consumer') {
+          newObj.money = 100;
+          newObj.consumerPrice = Math.floor(Math.random() * 20) + 1;
+        }
+
+        rooms.forEach(r => {
+          if (mouseX >= r.x && mouseX <= r.x + r.width &&
+              mouseY >= r.y && mouseY <= r.y + r.height) {
+            newObj.room = r;
+          }
+        });
+
+        gameObjects.push(newObj);
+
+        if (
+          objectClass === 'stockpile' ||
+          objectClass === 'converter' ||
+          objectClass === 'receiver' ||
+          objectClass === 'consumer'
+        ) {
+          const agent = {
+            x: mouseX,
+            y: mouseY,
+            speed: 1.5,
+            assignedObject: newObj,
+            targetObj: null,
+            state: 'idle',
+            carryingItem: false,
+            itemType,
+          };
+          if (objectClass === 'stockpile' || objectClass === 'converter') {
+            agent.laborCost = Math.floor(Math.random() * 20) + 1;
+            agent.money = 0;
+          }
+          if (objectClass === 'converter') {
+            agent.hasFish = false;
+            agent.hasPotato = false;
+          }
+          agents.push(agent);
+        }
+
+        currentSelectedType = null;
+        renderInspector();
+      }
+    });
+
+    canvas.addEventListener('mousemove', (e) => {
+      if (isDrawingRoom && currentRoomRect) {
+        const { x: mouseX, y: mouseY } = getMousePos(e);
+        currentRoomRect.width = mouseX - roomStart.x;
+        currentRoomRect.height = mouseY - roomStart.y;
+      }
+    });
+
+    canvas.addEventListener('mouseup', () => {
+      if (isDrawingRoom) {
+        let { x, y, width, height } = currentRoomRect;
+        if (width < 0)  { x += width; width = Math.abs(width); }
+        if (height < 0) { y += height; height = Math.abs(height); }
+        rooms.push({ x, y, width, height, money: 0 });
+
+        isDrawingRoom = false;
+        roomStart = null;
+        currentRoomRect = null;
+      }
+    });
+
+    ////////////////////////////////////////
+    // PARSE OBJECT TYPE
+    ////////////////////////////////////////
+    function parseObjectType(typeString) {
+      let itemType = 'unknown';
+      if (typeString.startsWith('fish')) {
+        if (typeString.startsWith('fishAndChips')) {
+          itemType = 'fishAndChips';
+        } else {
+          itemType = 'fish';
+        }
+      } else if (typeString.startsWith('potato')) {
+        itemType = 'potato';
+      } else if (typeString.startsWith('fishAndChips')) {
+        itemType = 'fishAndChips';
+      }
+
+      let objectClass = 'unknown';
+      if (typeString.endsWith('Source')) {
+        objectClass = 'source';
+      } else if (typeString.endsWith('Stockpile')) {
+        objectClass = 'stockpile';
+      } else if (typeString.endsWith('Dispatch')) {
+        objectClass = 'dispatch';
+      } else if (typeString.endsWith('Receiver')) {
+        objectClass = 'receiver';
+      } else if (typeString.endsWith('Converter')) {
+        objectClass = 'converter';
+      } else if (typeString.endsWith('Consumer')) {
+        objectClass = 'consumer';
+      }
+      return { objectClass, itemType };
+    }
+
+    ////////////////////////////////////////
+    // MAIN UPDATE LOOP
+    ////////////////////////////////////////
+    function update() {
+      // Player movement
+      if (keys['w']) player.y -= player.speed;
+      if (keys['s']) player.y += player.speed;
+      if (keys['a']) player.x -= player.speed;
+      if (keys['d']) player.x += player.speed;
+
+      // Update agents
+      updateAgents();
+      // Update particles
+      updateParticles();
+    }
+
+    function updateAgents() {
+      agents.forEach(agent => {
+        switch (agent.assignedObject.objectClass) {
+          case 'stockpile':
+            updateStockpileAgent(agent);
+            break;
+          case 'converter':
+            updateConverterAgent(agent);
+            break;
+          case 'receiver':
+            updateReceiverAgent(agent);
+            break;
+          case 'consumer':
+            updateConsumerAgent(agent);
+            break;
+        }
+        if (agent.targetObj) {
+          const dx = agent.targetObj.x - agent.x;
+          const dy = agent.targetObj.y - agent.y;
+          const dist = Math.sqrt(dx*dx + dy*dy);
+          if (dist > 1) {
+            agent.x += (dx/dist) * agent.speed;
+            agent.y += (dy/dist) * agent.speed;
+          } else {
+            handleAgentArrival(agent);
+          }
+        }
+      });
+    }
+
+    ////////////////////////////
+    // STOCKPILE AGENT
+    ////////////////////////////
+    function updateStockpileAgent(agent) {
+      if (agent.targetObj) return;
+      const bld = agent.assignedObject;
+      if (agent.carryingItem) {
+        agent.targetObj = bld;
+        agent.state = 'returningStockpile';
+      } else {
+        const rm = bld.room;
+        if (!rm) return;
+        const src = gameObjects.find(o =>
+          o.objectClass === 'source' &&
+          o.itemType === bld.itemType &&
+          o.room === rm
+        );
+        if (src) {
+          agent.targetObj = src;
+          agent.state = 'goingToSource';
+        }
+      }
+    }
+
+    ////////////////////////////
+    // CONVERTER AGENT
+    ////////////////////////////
+    function updateConverterAgent(agent) {
+      if (agent.targetObj) return;
+      const bld = agent.assignedObject;
+      if (bld.storedItems >= bld.capacity) return;
+      if (!agent.hasFish) {
+        const fObj = findStockpileOrReceiver(bld.room, 'fish');
+        if (fObj) {
+          agent.targetObj = fObj;
+          agent.state = 'collectingFish';
+        }
+      } else if (!agent.hasPotato) {
+        const pObj = findStockpileOrReceiver(bld.room, 'potato');
+        if (pObj) {
+          agent.targetObj = pObj;
+          agent.state = 'collectingPotato';
+        }
+      } else {
+        agent.targetObj = bld;
+        agent.state = 'returningToConverter';
+      }
+    }
+
+    function findStockpileOrReceiver(room, item) {
+      if (!room) return null;
+      return gameObjects.find(o =>
+        o.room === room &&
+        ((o.objectClass === 'stockpile' && o.itemType === item && o.storedItems > 0) ||
+         (o.objectClass === 'receiver' && o.itemType === item && o.hasItem))
+      );
+    }
+
+    ////////////////////////////
+    // RECEIVER AGENT
+    ////////////////////////////
+    function updateReceiverAgent(agent) {
+      if (agent.targetObj) return;
+      const recv = agent.assignedObject;
+      if (recv.hasItem) return; 
+      const disp = findValidDispatch(recv.itemType);
+      if (disp) {
+        agent.targetObj = disp;
+        agent.state = 'goingToDispatch';
+      }
+    }
+
+    function findValidDispatch(item) {
+      return gameObjects.find(d =>
+        d.objectClass === 'dispatch' &&
+        d.itemType === item &&
+        gameObjects.find(s =>
+          s.objectClass === 'stockpile' &&
+          s.itemType === item &&
+          s.room === d.room &&
+          s.storedItems > 0
+        )
+      );
+    }
+
+    ////////////////////////////
+    // CONSUMER AGENT
+    ////////////////////////////
+    function updateConsumerAgent(agent) {
+      if (agent.targetObj) return;
+      const consumerBld = agent.assignedObject;
+      if (agent.carryingItem) {
+        agent.targetObj = consumerBld;
+        agent.state = 'returningConsumer';
+      } else {
+        const anyDispatch = findAnyDispatch(consumerBld.itemType);
+        if (anyDispatch) {
+          agent.targetObj = anyDispatch;
+          agent.state = 'goingToConsumerDispatch';
+        }
+      }
+    }
+
+    function findAnyDispatch(itemType) {
+      return gameObjects.find(d =>
+        d.objectClass === 'dispatch' &&
+        d.itemType === itemType
+      );
+    }
+
+    ////////////////////////////////////////
+    // AGENT ARRIVAL LOGIC
+    ////////////////////////////////////////
+    function handleAgentArrival(agent) {
+      switch (agent.state) {
+        //----------------------------------
+        // STOCKPILE
+        //----------------------------------
+        case 'goingToSource': {
+          agent.carryingItem = true;
+          agent.targetObj = null;
+          agent.state = 'idle';
+          break;
+        }
+        case 'returningStockpile': {
+          const sp = agent.assignedObject;
+          if (sp.storedItems < sp.capacity) {
+            sp.storedItems += 1;
+            agent.carryingItem = false;
+            // labor payment
+            if (agent.laborCost && sp.money !== undefined && sp.room) {
+              agent.money = (agent.money||0) + agent.laborCost;
+              sp.money += agent.laborCost;
+              // Record cost or revenue:
+              recordRoomMoneyChange(sp, -agent.laborCost); // the room pays out
+              sp.room.money -= agent.laborCost;
+            }
+          }
+          agent.targetObj = null;
+          agent.state = 'idle';
+          break;
+        }
+
+        //----------------------------------
+        // CONVERTER
+        //----------------------------------
+        case 'collectingFish': {
+          pickUpConverterItem(agent, 'fish');
+          agent.targetObj = null;
+          agent.state = 'idle';
+          break;
+        }
+        case 'collectingPotato': {
+          pickUpConverterItem(agent, 'potato');
+          agent.targetObj = null;
+          agent.state = 'idle';
+          break;
+        }
+        case 'returningToConverter': {
+          const conv = agent.assignedObject;
+          if (conv.storedItems < conv.capacity) {
+            conv.storedItems += 1;
+            agent.hasFish = false;
+            agent.hasPotato = false;
+
+            // labor pay
+            if (agent.laborCost && conv.money !== undefined && conv.room) {
+              agent.money += agent.laborCost;
+              conv.money += agent.laborCost;
+              recordRoomMoneyChange(conv, -agent.laborCost); // the room pays out
+              conv.room.money -= agent.laborCost;
+            }
+          }
+          agent.targetObj = null;
+          agent.state = 'idle';
+          break;
+        }
+
+        //----------------------------------
+        // RECEIVER
+        //----------------------------------
+        case 'goingToDispatch': {
+          agent.currentDispatch = agent.targetObj;
+          const st = gameObjects.find(s =>
+            s.objectClass === 'stockpile' &&
+            s.itemType === agent.itemType &&
+            s.room === agent.currentDispatch.room &&
+            s.storedItems > 0
+          );
+          if (st) {
+            agent.targetObj = st;
+            agent.state = 'goingToStockpileForReceiver';
+          } else {
+            agent.targetObj = null;
+            agent.state = 'idle';
+          }
+          break;
+        }
+        case 'goingToStockpileForReceiver': {
+          const st = agent.targetObj;
+          if (st && st.objectClass === 'stockpile' && st.storedItems > 0) {
+            st.storedItems -= 1;
+            agent.carryingItem = true;
+            // pay for item
+            const rcv = agent.assignedObject;
+            const disp = agent.currentDispatch;
+            const stRoom = st.room;
+            const rcvRoom = rcv.room;
+            if (rcv.reservation && disp.modifier && stRoom && rcvRoom) {
+              const price = rcv.reservation + disp.modifier;
+              rcvRoom.money -= price;
+              recordRoomMoneyChange(rcv, -price);
+              stRoom.money += price;
+              recordRoomMoneyChange(disp, +price);
+            }
+          }
+          agent.targetObj = agent.assignedObject;
+          agent.state = 'returningReceiver';
+          break;
+        }
+        case 'returningReceiver': {
+          const rv = agent.assignedObject;
+          if (!rv.hasItem) {
+            rv.hasItem = true;
+            agent.carryingItem = false;
+          }
+          agent.currentDispatch = null;
+          agent.targetObj = null;
+          agent.state = 'idle';
+          break;
+        }
+
+        //----------------------------------
+        // CONSUMER
+        //----------------------------------
+        case 'goingToConsumerDispatch': {
+          agent.currentDispatch = agent.targetObj;
+          const dsp = agent.currentDispatch;
+          if (dsp.storedItems && dsp.storedItems > 0 && dsp.itemType === agent.itemType) {
+            dsp.storedItems -= 1;
+            agent.carryingItem = true;
+            const consumerBld = agent.assignedObject;
+            if (consumerBld.money !== undefined && dsp.modifier !== undefined && dsp.room) {
+              const price = consumerBld.consumerPrice + dsp.modifier;
+              consumerBld.money -= price;
+              recordRoomMoneyChange(consumerBld, -price);
+              dsp.room.money += price;
+              recordRoomMoneyChange(dsp, +price);
+            }
+            agent.targetObj = consumerBld; 
+            agent.state = 'returningConsumer';
+          } else {
+            const stOrConv = findPickupInDispatchRoom(dsp, agent.itemType);
+            if (stOrConv) {
+              agent.targetObj = stOrConv;
+              agent.state = 'goingToConsumerStockpile';
+            } else {
+              agent.currentDispatch = null;
+              agent.targetObj = null;
+              agent.state = 'idle';
+            }
+          }
+          break;
+        }
+        case 'goingToConsumerStockpile': {
+          const pickupObj = agent.targetObj;
+          const consumerBld = agent.assignedObject;
+          const dsp = agent.currentDispatch;
+          if (pickupObj) {
+            if (pickupObj.objectClass === 'stockpile' && pickupObj.storedItems > 0) {
+              pickupObj.storedItems -= 1;
+              agent.carryingItem = true;
+            } else if (pickupObj.objectClass === 'converter' && pickupObj.storedItems > 0) {
+              pickupObj.storedItems -= 1;
+              agent.carryingItem = true;
+            }
+            if (agent.carryingItem && consumerBld.money !== undefined && dsp.modifier !== undefined && pickupObj.room) {
+              const price = consumerBld.consumerPrice + dsp.modifier;
+              consumerBld.money -= price;
+              recordRoomMoneyChange(consumerBld, -price);
+              pickupObj.room.money += price;
+              recordRoomMoneyChange(dsp, +price);
+            }
+          }
+          agent.targetObj = consumerBld; 
+          agent.state = 'returningConsumer';
+          break;
+        }
+        case 'returningConsumer': {
+          const consumerBld = agent.assignedObject;
+          if (agent.carryingItem) {
+            agent.carryingItem = false;
+            spawnConsumeParticles(consumerBld.x, consumerBld.y);
+          }
+          agent.currentDispatch = null;
+          agent.targetObj = null;
+          agent.state = 'idle';
+          break;
+        }
+
+        default:
+          break;
+      }
+    }
+
+    function findPickupInDispatchRoom(dispatchObj, itemType) {
+      return gameObjects.find(o => {
+        if (o.room !== dispatchObj.room) return false;
+        if (o.objectClass === 'stockpile' && o.itemType === itemType && o.storedItems > 0) {
+          return true;
+        }
+        if (o.objectClass === 'converter' && o.itemType === itemType && o.storedItems > 0) {
+          return true;
+        }
+        return false;
+      });
+    }
+
+    function pickUpConverterItem(agent, whichItem) {
+      const obj = agent.targetObj;
+      if (!obj) return;
+      if (obj.objectClass === 'stockpile' && obj.storedItems > 0) {
+        obj.storedItems -= 1;
+        if (whichItem === 'fish') agent.hasFish = true;
+        if (whichItem === 'potato') agent.hasPotato = true;
+      } else if (obj.objectClass === 'receiver' && obj.hasItem) {
+        obj.hasItem = false;
+        if (whichItem === 'fish') agent.hasFish = true;
+        if (whichItem === 'potato') agent.hasPotato = true;
+      }
+    }
+
+    ////////////////////////////////////////
+    // RECORDING COST/REVENUE CHANGES
+    ////////////////////////////////////////
+    function recordRoomMoneyChange(building, delta) {
+      // Example approach: store the last money change in the building that caused it
+      // So if building caused the room to pay +10, building.lastMoneyChange=+10
+      // We'll let the draw function show it if showCostRevenue is true
+      building.lastMoneyChange = delta;
+      // (You could also store a timestamp if you only want it displayed briefly)
+    }
+
+    ////////////////////////////////////////
+    // PARTICLE EFFECTS FOR CONSUMPTION
+    ////////////////////////////////////////
+    function spawnConsumeParticles(x, y) {
+      for (let i = 0; i < 8; i++) {
+        particles.push({
+          x: x + (Math.random()*10 - 5),
+          y: y + (Math.random()*10 - 5),
+          life: 0,
+          maxLife: 30,
+          size: 5 + Math.random()*5
+        });
+      }
+    }
+
+    function updateParticles() {
+      for (let i = particles.length - 1; i >= 0; i--) {
+        const p = particles[i];
+        p.life++;
+        if (p.life > p.maxLife) {
+          particles.splice(i, 1);
+        }
+      }
+    }
+
+    ////////////////////////////////////////
+    // DRAW
+    ////////////////////////////////////////
+    function draw() {
+      ctx.clearRect(0, 0, canvas.clientWidth, canvas.clientHeight);
+
+      // Draw rooms
+      rooms.forEach(room => {
+        ctx.strokeStyle = 'blue';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(room.x, room.y, room.width, room.height);
+
+        if (showMoney) {
+          ctx.fillStyle = 'blue';
+          ctx.font = '12px sans-serif';
+          ctx.fillText(`$${room.money}`, room.x + 2, room.y + 12);
+        }
+      });
+
+      if (isDrawingRoom && currentRoomRect) {
+        ctx.strokeStyle = 'rgba(0, 0, 255, 0.5)';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(currentRoomRect.x, currentRoomRect.y, currentRoomRect.width, currentRoomRect.height);
+      }
+
+      // Draw buildings
+      gameObjects.forEach(obj => {
+        const color = getObjectColor(obj.type);
+        ctx.fillStyle = color;
+        ctx.fillRect(obj.x - obj.width/2, obj.y - obj.height/2, obj.width, obj.height);
+
+        // ADDED OR MODIFIED: Conditionally draw the building name
+        if (showNames) {
+          ctx.fillStyle = 'black';
+          ctx.font = '10px sans-serif';
+          ctx.fillText(obj.type, obj.x - 15, obj.y - 15);
+        }
+
+        // Stockpile/converter => stored
+        if (obj.objectClass === 'stockpile' || obj.objectClass === 'converter') {
+          ctx.fillStyle = 'black';
+          ctx.font = '10px sans-serif';
+          ctx.fillText(`Stored: ${obj.storedItems}/${obj.capacity}`, obj.x - 20, obj.y + 20);
+
+          if (showMoney && obj.money !== undefined) {
+            ctx.fillText(`$${obj.money}`, obj.x - 10, obj.y + 35);
+          }
+        }
+        // Dispatch => modifier
+        if (obj.objectClass === 'dispatch' && showMoney && obj.modifier !== undefined) {
+          ctx.fillStyle = 'black';
+          ctx.font = '10px sans-serif';
+          ctx.fillText(`Mod:${obj.modifier}`, obj.x - 15, obj.y + 20);
+        }
+        // Receiver => hasItem + reservation
+        if (obj.objectClass === 'receiver') {
+          ctx.fillStyle = 'black';
+          ctx.font = '10px sans-serif';
+          ctx.fillText(`HasItem: ${obj.hasItem}`, obj.x - 20, obj.y + 20);
+          if (showMoney && obj.reservation !== undefined) {
+            ctx.fillText(`Res:${obj.reservation}`, obj.x - 10, obj.y + 35);
+          }
+        }
+        // Consumer => money + consumerPrice
+        if (obj.objectClass === 'consumer' && showMoney) {
+          ctx.fillStyle = 'black';
+          ctx.font = '10px sans-serif';
+          ctx.fillText(`$${obj.money}`, obj.x - 10, obj.y + 20);
+          if (obj.consumerPrice !== undefined) {
+            ctx.fillText(`C$:${obj.consumerPrice}`, obj.x - 15, obj.y + 35);
+          }
+        }
+
+        // ADDED OR MODIFIED: Show last cost/revenue if showCostRevenue is ON
+        if (showCostRevenue && obj.lastMoneyChange !== 0) {
+          ctx.font = '12px sans-serif';
+          if (obj.lastMoneyChange > 0) {
+            ctx.fillStyle = 'green';
+            ctx.fillText(`+$${obj.lastMoneyChange}`, obj.x - 10, obj.y - 25);
+          } else {
+            ctx.fillStyle = 'red';
+            ctx.fillText(`-$${Math.abs(obj.lastMoneyChange)}`, obj.x - 10, obj.y - 25);
+          }
+        }
+      });
+
+      // Draw agents
+      agents.forEach(agent => {
+        switch (agent.assignedObject.objectClass) {
+          case 'stockpile':
+            if (agent.itemType === 'fish') ctx.fillStyle = 'orange';
+            else if (agent.itemType === 'potato') ctx.fillStyle = '#d2a743';
+            else ctx.fillStyle = 'black';
+            break;
+          case 'converter':
+            ctx.fillStyle = '#a06030';
+            break;
+          case 'receiver':
+            ctx.fillStyle = '#00aac2';
+            break;
+          case 'consumer':
+            ctx.fillStyle = '#b52fa7';
+            break;
+          default:
+            ctx.fillStyle = 'black';
+            break;
+        }
+        ctx.beginPath();
+        ctx.arc(agent.x, agent.y, 5, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Converter carrying fish/potato
+        if (agent.assignedObject.objectClass === 'converter') {
+          ctx.fillStyle = 'yellow';
+          let carryText = '';
+          if (agent.hasFish) carryText += 'F';
+          if (agent.hasPotato) carryText += 'P';
+          if (carryText) {
+            ctx.font = '10px sans-serif';
+            ctx.fillText(carryText, agent.x - 5, agent.y - 8);
+          }
+        }
+        // Stockpile/receiver => carryingItem
+        if ((agent.assignedObject.objectClass === 'stockpile' ||
+             agent.assignedObject.objectClass === 'receiver') && agent.carryingItem) {
+          ctx.fillStyle = 'yellow';
+          ctx.font = '10px sans-serif';
+          ctx.fillText('*', agent.x - 2, agent.y - 8);
+        }
+        // Consumer => show carrying with star
+        if (agent.assignedObject.objectClass === 'consumer' && agent.carryingItem) {
+          ctx.fillStyle = 'yellow';
+          ctx.font = '10px sans-serif';
+          ctx.fillText('*', agent.x - 2, agent.y - 8);
+        }
+
+        // If money display toggled on, show laborCost & agent money
+        if (showMoney && (agent.assignedObject.objectClass === 'stockpile' ||
+                          agent.assignedObject.objectClass === 'converter')) {
+          ctx.fillStyle = 'black';
+          ctx.font = '10px sans-serif';
+          const costText = `LC:${agent.laborCost} | $${agent.money||0}`;
+          ctx.fillText(costText, agent.x - 10, agent.y - 15);
+        }
+      });
+
+      // Draw player
+      ctx.fillStyle = 'black';
+      ctx.beginPath();
+      ctx.arc(player.x, player.y, player.size, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Draw fade-out particles
+      particles.forEach(p => {
+        const alpha = 1 - p.life / p.maxLife;
+        ctx.fillStyle = `rgba(255, 200, 50, ${alpha})`;
+        ctx.beginPath();
+        const size = p.size * alpha;
+        ctx.arc(p.x, p.y, size, 0, Math.PI*2);
+        ctx.fill();
+      });
+
+      // Highlight line from hovered row
+      if (hoveredBuilding) {
+        drawInspectorHighlightLine();
+      }
+    }
+
+    function drawInspectorHighlightLine() {
+      const bld = hoveredBuilding;
+      if (!bld) return;
+      const rect = canvas.getBoundingClientRect();
+      const dpr = window.devicePixelRatio || 1;
+      const mouseCanvasX = (hoveredMouse.x - rect.left) * dpr;
+      const mouseCanvasY = (hoveredMouse.y - rect.top) * dpr;
+      ctx.save();
+      ctx.strokeStyle = 'cyan';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(bld.x, bld.y);
+      ctx.lineTo(mouseCanvasX, mouseCanvasY);
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    function getObjectColor(type) {
+      if (type.startsWith('fish')) {
+        switch (type) {
+          case 'fishSource':    return 'green';
+          case 'fishStockpile': return 'orange';
+          case 'fishDispatch':  return 'purple';
+          case 'fishReceiver':  return 'red';
+          case 'fishAndChipsConverter': return '#b3b3b3';
+          case 'fishAndChipsDispatch':  return '#554d4d';
+          case 'fishConsumer':          return '#ff00ff';
+          case 'fishAndChipsConsumer':  return '#aa00aa';
+        }
+      }
+      else if (type.startsWith('potato')) {
+        switch (type) {
+          case 'potatoSource':    return '#6ea15f';
+          case 'potatoStockpile': return '#d2a743';
+          case 'potatoDispatch':  return '#814e1c';
+          case 'potatoReceiver':  return '#9b7345';
+        }
+      }
+      return 'black';
+    }
+
+    ////////////////////////////////////////
+    // GAME LOOP
+    ////////////////////////////////////////
+    function gameLoop() {
+      update();
+      draw();
+      requestAnimationFrame(gameLoop);
+    }
+    gameLoop();
+  </script>
+</body>
+</html>
