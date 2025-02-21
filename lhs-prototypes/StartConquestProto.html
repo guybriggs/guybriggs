@@ -1,0 +1,807 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>p5.js Kingdom of Blobs – Siege, Flag, Attacks, Dash & Zoom</title>
+  <!-- Include p5.js from CDN -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.6.0/p5.min.js"></script>
+  <style>
+    body { margin: 0; overflow: hidden; }
+  </style>
+</head>
+<body>
+<script>
+  // --- Global Variables & Constants ---
+  let player;
+  let zoom = 1;
+  let speed = 5;
+  
+  // Scenery arrays.
+  let blobs = [];
+  let massiveBlobs = [];
+  let ginormousBlobs = [];
+  
+  // Civilian agents.
+  let agents = [];
+  
+  // Friendly knights (patrollers).
+  let patrollers = [];
+  
+  // Enemy knights.
+  let enemyKnights = [];
+  
+  // Kingdom parameters.
+  const kingdomOffset = -2000;
+  let kingdomCenter; // Center of the enemy kingdom.
+  const kingdomRadius = 800;  // Radius for drawing the red boundary.
+  
+  let siegeStarted = false;   // When true, siege is active.
+  let siegeEnded = false;
+  
+  // Combat constants.
+  const KNIGHT_COLLISION_DISTANCE = 40;
+  const KNIGHT_HIT_THRESHOLD = 3;
+  
+  // Flag object.
+  let flag;
+  
+  // Player attack variables.
+  let playerAttackActive = false;
+  let playerAttackTimer = 0;
+  const playerAttackDuration = 15;
+  let playerAttackAngle = 0;
+  const playerSwordLength = 30;
+  const playerAttackThreshold = 20; // How close an enemy must be to get hit.
+  
+  // Dash variables.
+  const dashDistance = 100;
+  const dashCooldown = 60;
+  let lastDashFrame = -dashCooldown;
+  
+  function setup() {
+    createCanvas(windowWidth, windowHeight);
+    player = createVector(0, 0);
+    kingdomCenter = createVector(0, kingdomOffset);
+    
+    // Spawn the flag at the enemy kingdom's center.
+    flag = {
+      pos: kingdomCenter.copy(),
+      size: 40,
+      health: 1000,
+      maxHealth: 1000,
+      defeated: false
+    };
+    
+    // --- Create Kingdom Blobs ---
+    let colors = [
+      { name: "brown", col: color(120, 80, 50) },
+      { name: "blue", col: color(0, 120, 255) },
+      { name: "yellow", col: color(255, 255, 0) },
+      { name: "light orange", col: color(230, 170, 110) },
+      { name: "grey", col: color(100, 100, 100) }
+    ];
+    let blobSize = 200;
+    let ringConfigs = [8, 16, 24, 32];
+    for (let ringIndex = 0; ringIndex < ringConfigs.length; ringIndex++) {
+      let n = ringConfigs[ringIndex];
+      let radius = blobSize / (2 * sin(PI / n));
+      for (let i = 0; i < n; i++) {
+        if (random(1) < 0.75) continue;
+        let angle = i * TWO_PI / n;
+        let blobX = player.x + radius * cos(angle);
+        let blobY = player.y + radius * sin(angle) + kingdomOffset;
+        let colorObj = colors[i % colors.length];
+        let blob = {
+          pos: createVector(blobX, blobY),
+          size: blobSize,
+          colorName: colorObj.name,
+          col: colorObj.col,
+          points: generateBlobPoints(blobSize + random(0, blobSize * 0.5), 8)
+        };
+        blobs.push(blob);
+      }
+    }
+    
+    // --- Foundation Blobs ---
+    massiveBlobs.push({
+      pos: createVector(0, -700 + kingdomOffset * 0.6),
+      size: 1000 * 2.5,
+      col: color("#d0b57c"),
+      points: generateBlobPoints(1000 * 2.5, 10)
+    });
+    massiveBlobs.push({
+      pos: createVector(-400, -700 + kingdomOffset * 0.4),
+      size: 1000,
+      col: color("#c9ab69"),
+      points: generateBlobPoints(1000, 10)
+    });
+    massiveBlobs.push({
+      pos: createVector(400, -700 + kingdomOffset * 0.8),
+      size: 1000,
+      col: color("#c2a056"),
+      points: generateBlobPoints(1000, 10)
+    });
+    
+    // --- Environmental (Ginormous) Blobs ---
+    ginormousBlobs.push({
+      pos: createVector(-1000, 400),
+      size: 1200,
+      col: color(173, 216, 230),
+      points: generateBlobPoints(1200, 12)
+    });
+    ginormousBlobs.push({
+      pos: createVector(1000, 200),
+      size: 1200,
+      col: color(255, 250, 240),
+      points: generateBlobPoints(1200, 12)
+    });
+    ginormousBlobs.push({
+      pos: createVector(800, -1200),
+      size: 1200,
+      col: color(34, 139, 34),
+      points: generateBlobPoints(1200, 12)
+    });
+    
+    // --- Civilian Agents ---
+    let minX = -800, maxX = 800;
+    let minY = kingdomOffset - 800, maxY = kingdomOffset + 800;
+    for (let i = 0; i < 12; i++) {
+      let startX = random(minX, maxX);
+      let startY = random(minY, maxY);
+      let targetX = random(minX, maxX);
+      let targetY = random(minY, maxY);
+      agents.push({
+        pos: createVector(startX, startY),
+        start: createVector(startX, startY),
+        target: createVector(targetX, targetY),
+        speed: random(1, 3) * 0.75,
+        waitTime: 60,
+        timer: 0,
+        movingToTarget: true,
+        col: color(random(255), random(255), random(255)),
+        fearTimer: 0
+      });
+    }
+    
+    // --- Friendly Patrolling Knights ---
+    for (let i = 0; i < 3; i++) {
+      let base = createVector(random(-50, 50), random(-50, 50));
+      patrollers.push({
+        base: base,
+        pos: createVector(base.x + 150 * cos(random(TWO_PI)), base.y + 150 * sin(random(TWO_PI))),
+        angle: random(TWO_PI),
+        orbitRadius: 150,
+        orbitSpeed: random(0.01, 0.03) * 0.25,
+        state: "patrolling", // or "following"
+        lineIndex: null,
+        followSpeed: 4 * 0.75,
+        col: color(79, 171, 201),
+        hits: 0,
+        fighting: false,
+        fightTimer: 0,
+        fightTarget: null,
+        flashTimer: 0
+      });
+    }
+    
+    // --- Walled Blobs (Quaint Town) ---
+  // Instead of a separate walledBlobs array:
+  blobs.push({
+    pos: createVector(random(-300, 300), random(-300, 300)),
+    size: 300,
+    col: color(153, 102, 51),
+    points: generateBlobPoints(300, 10),
+    isWall: true  // mark this blob as a wall
+  });
+  blobs.push({
+    pos: createVector(random(-300, 300), random(-300, 300)),
+    size: 250,
+    col: color(210, 210, 210),
+    points: generateBlobPoints(250, 10),
+    isWall: true
+  });
+    
+    // --- Enemy Knights (Pre-existing in the Enemy Kingdom) ---
+    for (let i = 0; i < 6; i++) {
+      let r = random(kingdomRadius * 0.3, kingdomRadius * 0.8);
+      let angle = random(TWO_PI);
+      let pos = createVector(kingdomCenter.x + r * cos(angle), kingdomCenter.y + r * sin(angle));
+      enemyKnights.push({
+         base: pos.copy(),
+         pos: pos.copy(),
+         angle: random(TWO_PI),
+         orbitRadius: 30,
+         orbitSpeed: random(0.01, 0.03),
+         col: color(255, 0, 0),
+         hits: 0,
+         fighting: false,
+         fightTimer: 0,
+         fightTarget: null,
+         flashTimer: 0
+      });
+    }
+  }
+  
+  // --- Utility: Generate Irregular Blob Points ---
+  function generateBlobPoints(size, numPoints) {
+    let pts = [];
+    let radius = size / 2;
+    for (let i = 0; i < numPoints; i++) {
+      let angle = map(i, 0, numPoints, 0, TWO_PI);
+      let offset = random(-radius * 0.3, radius * 0.3);
+      let r = radius + offset;
+      let x = r * cos(angle);
+      let y = r * sin(angle);
+      pts.push(createVector(x, y));
+    }
+    return pts;
+  }
+  
+  // --- Drawing Functions ---
+  function drawScenery() {
+    drawGinormousBlobs();
+    drawMassiveBlobs();
+    drawBlobs();
+  }
+  
+  function drawBlobs() {
+    for (let blob of blobs) {
+      push();
+      translate(blob.pos.x, blob.pos.y);
+      fill(blob.col);
+      beginShape();
+      for (let pt of blob.points) {
+        curveVertex(pt.x, pt.y);
+      }
+      curveVertex(blob.points[0].x, blob.points[0].y);
+      curveVertex(blob.points[1].x, blob.points[1].y);
+      endShape();
+      pop();
+    }
+  }
+
+  function drawBlobsWalls() {
+    for (let blob of blobs) {
+      // Draw 10 copies of each blob with a slight downward offset
+      for (let i = 0; i < 10; i++) {
+        push();
+        // Use a positive offset to simulate depth
+        translate(blob.pos.x, blob.pos.y + i * 5);
+        noFill();
+        stroke(255);
+        strokeWeight(12);
+        beginShape();
+        for (let pt of blob.points) {
+          curveVertex(pt.x, pt.y);
+        }
+        // Close the shape
+        curveVertex(blob.points[0].x, blob.points[0].y);
+        curveVertex(blob.points[1].x, blob.points[1].y);
+        endShape();
+        pop();
+      }
+    }
+  }
+  
+  function drawMassiveBlobs() {
+    for (let blob of massiveBlobs) {
+      push();
+      translate(blob.pos.x, blob.pos.y);
+      // Draw the blob shape.
+      fill(blob.col);
+      noStroke();
+      beginShape();
+      for (let pt of blob.points) {
+        curveVertex(pt.x, pt.y);
+      }
+      // Close the shape by repeating the first two points.
+      curveVertex(blob.points[0].x, blob.points[0].y);
+      curveVertex(blob.points[1].x, blob.points[1].y);
+      endShape();
+      
+      // --- Draw multiple brown poles on the lower half ---
+      // Filter points from the lower half (where y >= 0)
+      let lowerPoints = blob.points.filter(pt => pt.y >= 0);
+      let desiredPoles = 6;  // Adjust this to 5 or 6 as you prefer.
+      let polePoints = [];
+      
+      // If there are enough lower points, sample evenly.
+      if (lowerPoints.length >= desiredPoles) {
+        let step = lowerPoints.length / desiredPoles;
+        for (let i = 0; i < desiredPoles; i++) {
+          let index = floor(i * step);
+          polePoints.push(lowerPoints[index]);
+        }
+      } else {
+        // Otherwise, use whatever lower points you have.
+        polePoints = lowerPoints;
+      }
+      
+      // Pole parameters.
+      let poleLength = 100;       // Each pole extends 100px downward.
+      let poleWidth = 10;
+      let poleColor = color(101, 67, 33);  // Brown color.
+      
+      // Draw each pole.
+      rectMode(CENTER);
+      for (let pt of polePoints) {
+        // Draw the pole so its top edge is at the blob’s boundary.
+        // With rectMode(CENTER), placing the rectangle at (pt.x, pt.y + poleLength/2)
+        // means the top edge will be at pt.y.
+        fill(poleColor);
+        noStroke();
+        rect(pt.x, pt.y + poleLength / 2, poleWidth, poleLength);
+        
+        // Optionally, add equidistant horizontal marks on the pole.
+        let marks = 3;
+        stroke(0);
+        strokeWeight(2);
+        for (let j = 1; j < marks; j++) {
+          let markY = pt.y + j * (poleLength / marks);
+          line(pt.x - poleWidth / 2, markY, pt.x + poleWidth / 2, markY);
+        }
+      }
+      
+      pop();
+    }
+  }
+  
+  function drawGinormousBlobs() {
+    for (let blob of ginormousBlobs) {
+      push();
+      translate(blob.pos.x, blob.pos.y);
+      fill(blob.col);
+      noStroke();
+      beginShape();
+      for (let pt of blob.points) {
+        curveVertex(pt.x, pt.y);
+      }
+      curveVertex(blob.points[0].x, blob.points[0].y);
+      curveVertex(blob.points[1].x, blob.points[1].y);
+      endShape();
+      pop();
+    }
+  }
+  
+  // --- Agents (Civilians) ---
+  function updateAgents() {
+    for (let a of agents) {
+      // Only scare civilians if the siege is active.
+      let d = p5.Vector.dist(a.pos, player);
+      if (siegeStarted && d < 100) {
+        a.fearTimer = 180;
+      }
+      if (a.fearTimer > 0) {
+        let fleeDir = p5.Vector.sub(a.pos, player);
+        fleeDir.normalize();
+        fleeDir.mult(a.speed * 2);
+        a.pos.add(fleeDir);
+        a.fearTimer--;
+      } else {
+        if (a.timer > 0) {
+          a.timer--;
+        } else {
+          let currentTarget = a.movingToTarget ? a.target : a.start;
+          let direction = p5.Vector.sub(currentTarget, a.pos);
+          if (direction.mag() < a.speed) {
+            a.pos = currentTarget.copy();
+            a.timer = a.waitTime;
+            a.movingToTarget = !a.movingToTarget;
+          } else {
+            direction.setMag(a.speed);
+            a.pos.add(direction);
+          }
+        }
+      }
+    }
+  }
+  
+  function drawAgents() {
+    for (let a of agents) {
+      fill(a.col);
+      noStroke();
+      ellipse(a.pos.x, a.pos.y, 20, 20);
+      // Flash "AAAH!!" above civilians when scared.
+      if(a.fearTimer > 0 && frameCount % 10 < 5) {
+        fill(255, 0, 0);
+        textSize(16);
+        textAlign(CENTER, BOTTOM);
+        text("AAAH!!", a.pos.x, a.pos.y - 20);
+      }
+    }
+  }
+  
+  // --- Friendly Knights (Patrollers) ---
+  function updatePatrollers() {
+    // Activate knights to follow when near the player (if not already fighting).
+    for (let p of patrollers) {
+      if (p.state === "patrolling" && !p.fighting) {
+        let d = dist(player.x, player.y, p.pos.x, p.pos.y);
+        if (d < 50 && keyIsDown(69)) {
+          p.state = "following";
+          let count = patrollers.filter(p2 => p2.state === "following").length;
+          p.lineIndex = count - 1;
+        }
+      }
+    }
+    
+    // Update knights in patrolling state.
+    for (let p of patrollers) {
+      if (p.state === "patrolling" && !p.fighting) {
+        p.angle += p.orbitSpeed;
+        p.pos.x = p.base.x + p.orbitRadius * cos(p.angle);
+        p.pos.y = p.base.y + p.orbitRadius * sin(p.angle);
+      }
+    }
+    
+    // Update knights in following state (only if not fighting).
+    let followers = patrollers.filter(p => p.state === "following" && !p.fighting)
+                                .sort((a, b) => a.lineIndex - b.lineIndex);
+    let desiredSpacing = 30;
+    for (let i = 0; i < followers.length; i++) {
+      let follower = followers[i];
+      let currentSpeed = follower.followSpeed * 2;
+      let target = (i === 0) ? createVector(player.x, player.y) : createVector(followers[i - 1].pos.x, followers[i - 1].pos.y);
+      let dir = p5.Vector.sub(target, follower.pos);
+      if (dir.mag() > desiredSpacing) {
+        dir.setMag(currentSpeed);
+        follower.pos.add(dir);
+      }
+    }
+  }
+  
+  function drawPatrollers() {
+    for (let p of patrollers) {
+      if (p.flashTimer > 0) {
+        fill(255);
+      } else {
+        fill(p.col);
+      }
+      noStroke();
+      ellipse(p.pos.x, p.pos.y, 20, 20);
+      // If in patrolling state and near player, show yellow indicator.
+      if (p.state === "patrolling" && !p.fighting) {
+        let d = dist(player.x, player.y, p.pos.x, p.pos.y);
+        if (d < 50) {
+          noFill();
+          stroke(255, 255, 0);
+          strokeWeight(3);
+          ellipse(p.pos.x, p.pos.y, 30, 30);
+        }
+      }
+      // Draw sword swing if knight is fighting (attacking an enemy or the flag).
+      if (p.fighting && p.fightTarget) {
+        let baseAngle = atan2(p.fightTarget.pos.y - p.pos.y, p.fightTarget.pos.x - p.pos.x);
+        let swing = radians(20) * sin(frameCount * 0.5);
+        let swordAngle = baseAngle + swing;
+        stroke(0);
+        strokeWeight(4);
+        line(p.pos.x, p.pos.y, p.pos.x + cos(swordAngle) * 30, p.pos.y + sin(swordAngle) * 30);
+      }
+    }
+  }
+  
+  // --- Enemy Knights ---
+  function updateEnemyKnights() {
+    for (let enemy of enemyKnights) {
+      if (!enemy.fighting) {
+        enemy.angle += enemy.orbitSpeed;
+        enemy.pos.x = enemy.base.x + enemy.orbitRadius * cos(enemy.angle);
+        enemy.pos.y = enemy.base.y + enemy.orbitRadius * sin(enemy.angle);
+      }
+    }
+  }
+  
+  function drawEnemyKnights() {
+    for (let enemy of enemyKnights) {
+      if (enemy.flashTimer > 0) {
+        fill(255);
+      } else {
+        fill(enemy.col);
+      }
+      noStroke();
+      ellipse(enemy.pos.x, enemy.pos.y, 20, 20);
+      if (enemy.fighting && enemy.fightTarget) {
+        let baseAngle = atan2(enemy.fightTarget.pos.y - enemy.pos.y, enemy.fightTarget.pos.x - enemy.pos.x);
+        let swing = radians(20) * sin(frameCount * 0.5);
+        let swordAngle = baseAngle + swing;
+        stroke(0);
+        strokeWeight(4);
+        line(enemy.pos.x, enemy.pos.y, enemy.pos.x + cos(swordAngle) * 30, enemy.pos.y + sin(swordAngle) * 30);
+      }
+    }
+  }
+  
+  // --- Draw Flag with Pole, Triangular Banner & Health Bar ---
+  function drawFlag() {
+    if (flag.defeated) return;
+    push();
+    // Draw the flag pole.
+    stroke(0);
+    strokeWeight(4);
+    line(flag.pos.x, flag.pos.y, flag.pos.x, flag.pos.y - 50);
+    
+    // Compute the flag's vertical position based on its health.
+    // Full health (healthFraction = 1) positions the flag at the top (flag.pos.y - 50),
+    // and zero health (healthFraction = 0) positions it at the bottom (flag.pos.y).
+    let healthFraction = flag.health / flag.maxHealth;
+    let flagY = flag.pos.y - 50 * healthFraction;
+    
+    // Draw the triangular flag banner at the computed position.
+    noStroke();
+    fill(255, 0, 0);
+    triangle(flag.pos.x, flagY, flag.pos.x + 30, flagY + 5, flag.pos.x, flagY + 20);
+    pop();
+  }
+  
+  // --- Combat: Friendly Knights vs. Enemy Knights ---
+  function updateKnightCombat() {
+    if (!siegeStarted) return;
+    // Check engagements.
+    for (let friendly of patrollers) {
+      if (friendly.fighting) continue;
+      for (let enemy of enemyKnights) {
+        if (enemy.fighting) continue;
+        let d = p5.Vector.dist(friendly.pos, enemy.pos);
+        if (d < KNIGHT_COLLISION_DISTANCE) {
+          friendly.fighting = true;
+          enemy.fighting = true;
+          friendly.fightTimer = 30;
+          enemy.fightTimer = 30;
+          friendly.fightTarget = enemy;
+          enemy.fightTarget = friendly;
+        }
+      }
+    }
+    // Process ongoing fights.
+    let allKnights = patrollers.concat(enemyKnights);
+    for (let knight of allKnights) {
+      if (knight.fighting && knight.fightTarget !== flag) {
+        knight.fightTimer--;
+        if (knight.fightTimer <= 0) {
+          if (knight.fightTarget && knight.fightTarget.fighting) {
+            knight.hits++;
+            knight.fightTarget.hits++;
+            knight.flashTimer = 15;
+            knight.fightTarget.flashTimer = 15;
+            let knockback = p5.Vector.sub(knight.pos, knight.fightTarget.pos);
+            knockback.setMag(20);
+            knight.pos.add(knockback);
+            let knockbackTarget = p5.Vector.sub(knight.fightTarget.pos, knight.pos);
+            knockbackTarget.setMag(20);
+            knight.fightTarget.pos.add(knockbackTarget);
+          }
+          if (knight.fightTarget) {
+            knight.fightTarget.fighting = false;
+            knight.fightTarget.fightTimer = 0;
+            knight.fightTarget.fightTarget = null;
+          }
+          knight.fighting = false;
+          knight.fightTimer = 0;
+          knight.fightTarget = null;
+        }
+      }
+      if (knight.flashTimer > 0) knight.flashTimer--;
+    }
+    // Remove knights with too many hits.
+    patrollers = patrollers.filter(k => k.hits < KNIGHT_HIT_THRESHOLD);
+    enemyKnights = enemyKnights.filter(k => k.hits < KNIGHT_HIT_THRESHOLD);
+  }
+  
+  // --- Combat: Knights vs. Flag ---
+  function updateFlagCombat() {
+    if (!siegeStarted || flag.defeated) return;
+    const flagAttackRadius = 50;
+    const damagePerFrame = 1;
+    
+    // For each friendly knight not already attacking, if within threshold, begin attacking the flag.
+    for (let knight of patrollers) {
+      if (!knight.fighting) {
+        let d = p5.Vector.dist(knight.pos, flag.pos);
+        if (d < flagAttackRadius) {
+          knight.fighting = true;
+          knight.fightTarget = flag;
+        }
+      }
+    }
+    
+    // Every frame, each knight attacking the flag deals damage.
+    let attackers = patrollers.filter(knight => knight.fighting && knight.fightTarget === flag);
+    flag.health -= damagePerFrame * attackers.length;
+    
+    // Check if the flag is defeated.
+    if (flag.health <= 0 && !flag.defeated) {
+      // Stop all knight fighting.
+      for (let knight of patrollers) {
+        knight.fighting = false;
+        knight.fightTimer = 0;
+        knight.fightTarget = null;
+      }
+      for (let enemy of enemyKnights) {
+        enemy.fighting = false;
+        enemy.fightTimer = 0;
+        enemy.fightTarget = null;
+      }
+      flag.defeated = true;
+      siegeStarted = false;
+      siegeEnded = true;
+      // Convert enemy knights to civilians with random colors.
+      for (let enemy of enemyKnights) {
+        agents.push({
+          pos: enemy.pos.copy(),
+          start: enemy.pos.copy(),
+          target: p5.Vector.add(enemy.pos, p5.Vector.random2D().mult(100)),
+          speed: random(1, 3) * 0.75,
+          waitTime: 60,
+          timer: 0,
+          movingToTarget: true,
+          col: color(random(255), random(255), random(255)),
+          fearTimer: 0
+        });
+      }
+      enemyKnights = [];
+    }
+  }
+  
+  // --- Player Attack (Left-Click) ---
+  function updatePlayerAttack() {
+    if (playerAttackActive) {
+      playerAttackTimer--;
+      if (playerAttackTimer <= 0) {
+        playerAttackActive = false;
+      } else {
+        let attackPoint = createVector(
+          player.x + cos(playerAttackAngle) * playerSwordLength,
+          player.y + sin(playerAttackAngle) * playerSwordLength
+        );
+        for (let enemy of enemyKnights) {
+          let d = p5.Vector.dist(attackPoint, enemy.pos);
+          if (d < playerAttackThreshold) {
+            enemy.hits++;
+            enemy.flashTimer = 15;
+            let knockback = p5.Vector.sub(enemy.pos, player);
+            knockback.setMag(20);
+            enemy.pos.add(knockback);
+          }
+        }
+        enemyKnights = enemyKnights.filter(e => e.hits < KNIGHT_HIT_THRESHOLD);
+      }
+    }
+  }
+  
+  function drawPlayerAttack() {
+    if (playerAttackActive) {
+      stroke(0);
+      strokeWeight(4);
+      let swing = radians(20) * sin(frameCount * 0.5);
+      let swordAngle = playerAttackAngle + swing;
+      line(player.x, player.y, player.x + cos(swordAngle) * playerSwordLength, player.y + sin(swordAngle) * playerSwordLength);
+    }
+  }
+  
+  // --- Input Handling ---
+  function handleInput() {
+    if (keyIsDown(87)) { player.y -= speed; }
+    if (keyIsDown(83)) { player.y += speed; }
+    if (keyIsDown(65)) { player.x -= speed; }
+    if (keyIsDown(68)) { player.x += speed; }
+  }
+  
+  function mousePressed() {
+    if (mouseButton === LEFT) {
+      let worldMouse = createVector(
+        (mouseX - width / 2) / zoom + player.x,
+        (mouseY - height / 2) / zoom + player.y
+      );
+      playerAttackAngle = atan2(worldMouse.y - player.y, worldMouse.x - player.x);
+      playerAttackActive = true;
+      playerAttackTimer = playerAttackDuration;
+    }
+  }
+  
+  function keyPressed() {
+    if (keyCode === SHIFT && frameCount - lastDashFrame >= dashCooldown) {
+      let dashDir = createVector(0, 0);
+      if (keyIsDown(87)) dashDir.y -= 1;
+      if (keyIsDown(83)) dashDir.y += 1;
+      if (keyIsDown(65)) dashDir.x -= 1;
+      if (keyIsDown(68)) dashDir.x += 1;
+      if (dashDir.mag() === 0) dashDir = createVector(0, -1);
+      dashDir.normalize();
+      player.add(dashDir.mult(dashDistance));
+      lastDashFrame = frameCount;
+    }
+  }
+  
+  // --- Mouse Wheel for Zoom ---
+  function mouseWheel(event) {
+    zoom -= event.delta * 0.001;
+    zoom = constrain(zoom, 0.1, 5);
+    return false;
+  }
+  
+  function drawGrid() {
+    // Slightly darker green for the grid.
+    stroke(130, 200, 65);
+    strokeWeight(1);
+    let gridSize = 50;
+    
+    let startX = player.x - width / (2 * zoom);
+    let endX = player.x + width / (2 * zoom);
+    let startY = player.y - height / (2 * zoom);
+    let endY = player.y + height / (2 * zoom);
+    
+    for (let x = floor(startX / gridSize) * gridSize; x < endX; x += gridSize) {
+      line(x, startY, x, endY);
+    }
+    for (let y = floor(startY / gridSize) * gridSize; y < endY; y += gridSize) {
+      line(startX, y, endX, y);
+    }
+  }
+
+  // --- Drawing the Scene ---
+  let originalDraw = function() {
+    background("#99e64c");
+    
+    translate(width / 2, height / 2);
+    scale(zoom);
+    translate(-player.x, -player.y);
+    
+    //drawGrid();
+
+    drawScenery();
+    updateAgents();
+    drawAgents();
+    
+    updatePatrollers();
+    drawPatrollers();
+    
+    updateEnemyKnights();
+    drawEnemyKnights();
+    
+    drawFlag();
+    
+    updateKnightCombat();
+    updateFlagCombat();
+    updatePlayerAttack();
+    drawPlayerAttack();
+    
+    // Draw the red kingdom circle only if the siege has NOT started.
+    if (!siegeStarted && !siegeEnded) {
+      let friendlyFollowing = patrollers.filter(p => p.state === "following");
+      if (friendlyFollowing.length > 0) {
+        noFill();
+        stroke(255, 0, 0);
+        strokeWeight(12);
+        ellipse(kingdomCenter.x, kingdomCenter.y, kingdomRadius * 2, kingdomRadius * 2);
+        let dToCenter = dist(player.x, player.y, kingdomCenter.x, kingdomCenter.y);
+        let boundaryDiff = abs(dToCenter - kingdomRadius);
+        if (dToCenter < kingdomRadius) {
+          siegeStarted = true;
+          if (siegeEnded) siegeStarted = false;
+        }
+      }
+    }
+    
+    // Draw the player.
+    fill(0, 0, 255);
+    noStroke();
+    ellipse(player.x, player.y, 20, 20);
+
+    drawBlobsWalls();
+    
+    handleInput();
+  };
+  
+  function extendedDraw() {
+    originalDraw();
+  }
+
+  window.draw = extendedDraw;
+  
+  function windowResized() {
+    resizeCanvas(windowWidth, windowHeight);
+  }
+</script>
+</body>
+</html>
