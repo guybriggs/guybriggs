@@ -1,0 +1,885 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>p5.js Automatic Home & Restaurant, Spread Out</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.6.0/p5.min.js"></script>
+  <style>
+    body { margin: 0; overflow: hidden; }
+  </style>
+</head>
+<body>
+<script>
+// --------------------------------------------------------------------------
+// GLOBALS
+// --------------------------------------------------------------------------
+
+// Player & camera
+let player;
+let zoom = 1;
+let speed = 5;
+
+// Arrays for “home” rooms (lobby, kitchen, bedroom) and “restaurant floors”
+let rooms = [];               // will store objects like { points, fillColor }
+let restaurantFloors = [];    // likewise
+
+// “Home” furniture
+let fishDeliveries = [];
+let stoves = [];
+let dinnerTables = [];
+let beds = [];
+
+// “Restaurant” furniture
+let restaurantBeds = [];
+let restaurantDiningTables = [];
+
+// Drone states (home consumer’s fish):
+// 0=to station, 1=away, 2=idle, 3=wait offscreen
+let drone = {
+  pos: null,
+  speed: 3,
+  diameter: 15,  // ~0.75x player’s 20px
+  hasFish: true,
+  state: 2,
+  awaySince: 0,
+};
+
+// Single fish object (for home consumer)
+let fish = {
+  carriedBy: null, // "follower-home" or null
+  pos: null
+};
+
+// Two followers:
+// 1) Home consumer (green)
+// 2) Restaurant consumer (magenta)
+let followers = [
+  {
+    type: "home",
+    pos: null,
+    followSpeed: 3,
+    color: [0, 200, 0],
+    state: 0,
+    waitingSince: 0,
+    zParticles: [],
+    // references
+    fishDelivery: null,
+    stove: null,
+    dinnerTable: null,
+    bed: null
+  },
+  {
+    type: "restaurant",
+    pos: null,
+    followSpeed: 3,
+    color: [200, 0, 200],
+    state: 0,
+    waitingSince: 0,
+    zParticles: [],
+    // references
+    restaurantBed: null,
+    restaurantDiningTable: null
+  }
+];
+
+// HOME consumer states:
+// 0: WAIT_FOR_FISH
+// 1: MOVE_FISH_TO_STOVE
+// 2: WAIT_STOVE
+// 3: MOVE_FISH_TO_TABLE
+// 4: WAIT_TABLE
+// 5: MOVE_TO_BED
+// 6: WAIT_BED
+// 7: RESTART_CYCLE
+
+// RESTAURANT consumer states:
+// 0: WAIT_FOR_BED
+// 1: SLEEP_IN_BED (3s)
+// 2: MOVE_TO_RESTAURANT_TABLE
+// 3: WAIT_AT_TABLE (3s)
+// 4: RETURN_TO_BED (cycle repeats)
+
+// Start positions for the two followers
+const HOME_FOLLOWER_START = { x: -50, y: -50 };
+const REST_FOLLOWER_START = { x:  50, y:  50 };
+
+// --------------------------------------------------------------------------
+// SETUP & DRAW
+// --------------------------------------------------------------------------
+
+function setup() {
+  createCanvas(windowWidth, windowHeight);
+
+  // Player at origin
+  player = createVector(0, 0);
+
+  fish.pos = createVector(-9999, -9999);
+
+  // Place the two followers
+  followers[0].pos = createVector(HOME_FOLLOWER_START.x, HOME_FOLLOWER_START.y);
+  followers[1].pos = createVector(REST_FOLLOWER_START.x, REST_FOLLOWER_START.y);
+
+  // Place the large “home” arrangement above the player
+  placeHomeSetupSpacedOut();
+
+  // Place the “restaurant” arrangement below the player
+  placeRestaurantSetupSpacedOut();
+}
+
+function draw() {
+  background(220);
+
+  // Camera transform
+  translate(width / 2, height / 2);
+  scale(zoom);
+  translate(-player.x, -player.y);
+
+  drawGrid();
+
+  // Draw “home” rooms + “restaurant” floors
+  drawRooms();
+  drawRestaurantFloors();
+
+  // Player
+  fill(0, 0, 255);
+  noStroke();
+  ellipse(player.x, player.y, 20, 20);
+
+  // Drone (home consumer)
+  updateDrone();
+
+  // Followers
+  for (let f of followers) {
+    updateFollowerCycle(f);
+    drawFollower(f);
+  }
+
+  // Furniture
+  drawHomeFurniture();
+  drawRestaurantFurniture();
+
+  // Draw fish if not carried
+  if (fish.carriedBy === null && fish.pos) {
+    fill(50, 150, 200);
+    ellipse(fish.pos.x, fish.pos.y, 10, 10);
+  }
+
+  handleMovement();
+  drawInstructions();
+}
+
+// --------------------------------------------------------------------------
+// AUTOMATIC PLACEMENT: SPREAD-OUT FLOORS
+// --------------------------------------------------------------------------
+
+function placeHomeSetupSpacedOut() {
+  // We'll place 3 "home" blobs (lobby, kitchen, bedroom) horizontally,
+  // all at y=-300 (above player). 
+  // Then place the home furniture near the center one.
+  
+  // LOBBY at x=-600
+  let lobbyPos    = createVector(0, -150);
+  let lobbyBlob   = createRoomBlob(lobbyPos, color(128,128,128), 0.25);
+  rooms.push(lobbyBlob);
+
+  // BEDROOM at x=+600
+  let bedroomPos  = createVector(300, -300);
+  let bedroomBlob = createRoomBlob(bedroomPos, color('#99ff99'), 1.0);
+  rooms.push(bedroomBlob);
+
+  // KITCHEN at x=0
+  let kitchenPos  = createVector(0, -400);
+  let kitchenBlob = createRoomBlob(kitchenPos, color(173, 216, 230), 0.75);
+  rooms.push(kitchenBlob);
+
+  // Now place the home furniture near the kitchen (center) so they're together:
+  // fish delivery, stove, dinner table, bed.
+
+  // Fish Delivery near ( -50, -250 )
+  let fdPos = createVector(0, -150);
+  let fishDeliveryObj = {
+    placed: true,
+    pos: fdPos,
+    color: [160,82,45]
+  };
+  fishDeliveries.push(fishDeliveryObj);
+
+  let homeF = followers.find(f => f.type === "home");
+  if (homeF) {
+    homeF.fishDelivery = fishDeliveryObj;
+    drone.state = 0;
+    drone.pos = p5.Vector.sub(fdPos, createVector(500,0));
+    drone.hasFish = true;
+  }
+
+  // Stove at ( -50, -200 )
+  let stoveObj = {
+    placed: true,
+    pos: createVector(-100, -300),
+    color: [255,165,0],
+    dependency: "fishDelivery"
+  };
+  stoves.push(stoveObj);
+
+  // Dinner table at (0, -150)
+  let dtObj = {
+    placed: true,
+    pos: createVector(100, -300),
+    color: [139,69,19],
+    dependency: "stove"
+  };
+  dinnerTables.push(dtObj);
+
+  // Bed at (50, -100)
+  let bedObj = {
+    placed: true,
+    pos: createVector(250, -200),
+    color: [128,0,128],
+    dependency: "dinnerTable"
+  };
+  beds.push(bedObj);
+}
+
+function placeRestaurantSetupSpacedOut() {
+  // We'll place 2 large blobs at y=+300
+  // 1) "bedroom" (just to show the bedroom color again) at x=-400
+  // 2) "restaurant floor" at x=+400
+  // Then place the restaurant bed near the left bedroom, 
+  // and the restaurant table near the right restaurant floor.
+
+  // Another bedroom blob
+  let bedroom2Pos = createVector(-400, 300);
+  let bedroom2Blob = createRoomBlob(bedroom2Pos, color('#99ff99'), 1.0);
+  rooms.push(bedroom2Blob);
+
+  // Restaurant floor
+  let restaurantPos = createVector(400, 300);
+  let restBlob = createRestaurantFloorBlob(restaurantPos);
+  restaurantFloors.push(restBlob);
+
+  // Place the "restaurant bed" near the left blob
+  let rb = {
+    placed: true,
+    pos: createVector(-400, 250),
+    color: [255,200,0]
+  };
+  restaurantBeds.push(rb);
+
+  // Place the "restaurant dining table" near the right blob
+  let rt = {
+    placed: true,
+    pos: createVector(400, 250),
+    color: [200,100,50]
+  };
+  restaurantDiningTables.push(rt);
+}
+
+// --------------------------------------------------------------------------
+// CAMERA & MOVEMENT
+// --------------------------------------------------------------------------
+
+function handleMovement() {
+  if (keyIsDown(87)) { // W
+    player.y -= speed;
+  }
+  if (keyIsDown(83)) { // S
+    player.y += speed;
+  }
+  if (keyIsDown(65)) { // A
+    player.x -= speed;
+  }
+  if (keyIsDown(68)) { // D
+    player.x += speed;
+  }
+}
+
+function mouseWheel(event) {
+  zoom -= event.delta * 0.001;
+  zoom = constrain(zoom, 0.1, 5);
+  return false;
+}
+
+function drawGrid() {
+  stroke(200);
+  strokeWeight(1);
+  let gridSize = 50;
+  let startX = player.x - width / (2 * zoom);
+  let endX   = player.x + width / (2 * zoom);
+  let startY = player.y - height / (2 * zoom);
+  let endY   = player.y + height / (2 * zoom);
+
+  for (let x = floor(startX / gridSize) * gridSize; x < endX; x += gridSize) {
+    line(x, startY, x, endY);
+  }
+  for (let y = floor(startY / gridSize) * gridSize; y < endY; y += gridSize) {
+    line(startX, y, endX, y);
+  }
+}
+
+// --------------------------------------------------------------------------
+// HOME ROOMS
+// --------------------------------------------------------------------------
+
+function drawRooms() {
+  for (let r of rooms) {
+    drawRoomBlob(r.points, r.fillColor);
+  }
+}
+
+function createRoomBlob(center, fillColor, scaleFactor=1) {
+  let HOME_BASE_SIZE = 600;
+  let numPoints = 60;
+  let baseSize = HOME_BASE_SIZE * scaleFactor;
+  let offset = random(10000);
+  let noiseScale = 0.2;
+  let radiusVariation = baseSize * 0.05;
+  let points = [];
+
+  for (let i = 0; i < numPoints; i++) {
+    let angle = (TWO_PI * i) / numPoints;
+    let n = noise(offset + i * noiseScale);
+    let r = baseSize * 0.5 + map(n, 0, 1, -radiusVariation, radiusVariation);
+    let x = center.x + cos(angle) * r;
+    let y = center.y + sin(angle) * r;
+    points.push(createVector(x, y));
+  }
+  return { points, fillColor };
+}
+
+function drawRoomBlob(points, fillColor) {
+  push();
+  noStroke();
+  fill(fillColor);
+  curveTightness(0.8);
+
+  beginShape();
+  curveVertex(points[0].x, points[0].y);
+  for (let i = 0; i < points.length; i++) {
+    curveVertex(points[i].x, points[i].y);
+  }
+  curveVertex(points[0].x, points[0].y);
+  curveVertex(points[1].x, points[1].y);
+  endShape(CLOSE);
+  pop();
+}
+
+// --------------------------------------------------------------------------
+// RESTAURANT FLOORS
+// --------------------------------------------------------------------------
+
+function drawRestaurantFloors() {
+  for (let rf of restaurantFloors) {
+    drawRoomBlob(rf.points, rf.fillColor);
+  }
+}
+
+function createRestaurantFloorBlob(center) {
+  let baseSize = 600;
+  let numPoints = 60;
+  let offset = random(10000);
+  let noiseScale = 0.2;
+  let radiusVariation = baseSize * 0.05;
+  let points = [];
+
+  for (let i = 0; i < numPoints; i++) {
+    let angle = (TWO_PI * i) / numPoints;
+    let n = noise(offset + i * noiseScale);
+    let r = baseSize * 0.5 + map(n, 0, 1, -radiusVariation, radiusVariation);
+    let x = center.x + cos(angle) * r;
+    let y = center.y + sin(angle) * r;
+    points.push(createVector(x, y));
+  }
+  let c = color(255, 230, 200); // a light beige
+  return { points, fillColor: c };
+}
+
+// --------------------------------------------------------------------------
+// HOME FURNITURE
+// --------------------------------------------------------------------------
+
+function drawHomeFurniture() {
+  rectMode(CENTER);
+  textAlign(CENTER, BOTTOM);
+  textSize(14);
+
+  // Fish deliveries
+  for (let fd of fishDeliveries) {
+    if (!fd.placed) continue;
+    fill(fd.color);
+    noStroke();
+    rect(fd.pos.x, fd.pos.y, 40, 40);
+
+    // Red label
+    push();
+    translate(fd.pos.x, fd.pos.y - 30);
+    fill(255, 0, 0);
+    rect(0, 0, 50, 20);
+    fill(255);
+    textSize(12);
+    text("- $5.00", 0, 5);
+    pop();
+  }
+
+  // Stoves
+  for (let st of stoves) {
+    if (!st.placed) continue;
+    fill(st.color);
+    noStroke();
+    rect(st.pos.x, st.pos.y, 40, 40);
+
+    push();
+    translate(st.pos.x, st.pos.y - 30);
+    fill(255, 0, 0);
+    rect(0, 0, 50, 20);
+    fill(255);
+    textSize(12);
+    text("- $2.50", 0, 5);
+    pop();
+  }
+
+  // Dinner tables
+  for (let dt of dinnerTables) {
+    if (!dt.placed) continue;
+    fill(dt.color);
+    noStroke();
+    rect(dt.pos.x, dt.pos.y, 50, 35);
+
+    push();
+    translate(dt.pos.x, dt.pos.y - 30);
+    fill(0, 128, 128);
+    rect(0, 0, 80, 20);
+    fill(255);
+    textSize(12);
+    text("+10 Utility", 0, 5);
+    pop();
+  }
+
+  // Beds
+  for (let b of beds) {
+    if (!b.placed) continue;
+    fill(b.color);
+    noStroke();
+    rect(b.pos.x, b.pos.y, 50, 30);
+  }
+}
+
+// --------------------------------------------------------------------------
+// RESTAURANT FURNITURE
+// --------------------------------------------------------------------------
+
+function drawRestaurantFurniture() {
+  rectMode(CENTER);
+  textAlign(CENTER, BOTTOM);
+  textSize(14);
+
+  // Restaurant beds
+  for (let rb of restaurantBeds) {
+    if (!rb.placed) continue;
+    fill(rb.color);
+    noStroke();
+    rect(rb.pos.x, rb.pos.y, 50, 30);
+
+    // -$10.00 (red), +10 Utility (teal)
+    push();
+    translate(rb.pos.x, rb.pos.y - 45);
+    fill(255, 0, 0);
+    rect(0, 0, 60, 20);
+    fill(255);
+    textSize(12);
+    text("- $10.00", 0, 5);
+    pop();
+
+    push();
+    translate(rb.pos.x, rb.pos.y - 25);
+    fill(0, 128, 128);
+    rect(0, 0, 60, 20);
+    fill(255);
+    textSize(12);
+    text("+10 Utility", 0, 5);
+    pop();
+  }
+
+  // Restaurant dining tables
+  for (let rt of restaurantDiningTables) {
+    if (!rt.placed) continue;
+    fill(rt.color);
+    noStroke();
+    rect(rt.pos.x, rt.pos.y, 50, 35);
+  }
+}
+
+// --------------------------------------------------------------------------
+// DRONE LOGIC (HOME ONLY)
+// --------------------------------------------------------------------------
+
+function updateDrone() {
+  let homeF = followers.find(f => f.type === "home");
+  if (!homeF || !homeF.fishDelivery) return;
+
+  let fd = homeF.fishDelivery;
+  if (!fd.placed) return;
+
+  // Draw the drone unless idle/waiting
+  if (drone.state !== 2 && drone.state !== 3) {
+    fill(0);
+    noStroke();
+    ellipse(drone.pos.x, drone.pos.y, drone.diameter, drone.diameter);
+  }
+
+  switch (drone.state) {
+    case 0: // traveling to station
+      {
+        let target = fd.pos;
+        let dir = p5.Vector.sub(target, drone.pos);
+        if (dir.mag() < 5) {
+          // Arrived
+          drone.hasFish = false;
+          fish.carriedBy = null;
+          fish.pos = fd.pos.copy();
+          drone.state = 1;
+        } else {
+          dir.setMag(drone.speed);
+          drone.pos.add(dir);
+        }
+      }
+      break;
+
+    case 1: // traveling away
+      {
+        let awayTarget = p5.Vector.sub(fd.pos, createVector(500, 0));
+        let dir = p5.Vector.sub(awayTarget, drone.pos);
+        if (dir.mag() < 5) {
+          drone.state = 3;
+          drone.awaySince = millis();
+        } else {
+          dir.setMag(drone.speed);
+          drone.pos.add(dir);
+        }
+      }
+      break;
+
+    case 2: // idle offscreen
+      break;
+
+    case 3: // wait 3s
+      let elapsed = millis() - drone.awaySince;
+      if (elapsed > 3000) {
+        drone.state = 2;
+      }
+      break;
+  }
+}
+
+// --------------------------------------------------------------------------
+// FOLLOWERS & STATE MACHINES
+// --------------------------------------------------------------------------
+
+function drawFollower(f) {
+  fill(f.color);
+  ellipse(f.pos.x, f.pos.y, 20, 20);
+
+  // Z particles
+  for (let z of f.zParticles) {
+    push();
+    fill(0, z.alpha);
+    textSize(z.size);
+    textAlign(CENTER, CENTER);
+    translate(z.x, z.y);
+    text("Z", 0, 0);
+    pop();
+  }
+}
+
+function updateFollowerCycle(f) {
+  if (f.type === "home") {
+    updateHomeConsumer(f);
+  } else {
+    updateRestaurantConsumer(f);
+  }
+  updateZParticles(f);
+}
+
+// ------------------------- HOME consumer -------------------------
+
+function updateHomeConsumer(f) {
+  setHomeFurnitureRefs(f);
+
+  // If missing any references, follow player
+  if (!f.fishDelivery || !f.stove || !f.dinnerTable || !f.bed) {
+    moveTowards(f.pos, player, f.followSpeed);
+    return;
+  }
+
+  switch (f.state) {
+    case 0: waitForFish(f); break;
+    case 1: moveFishToStove(f); break;
+    case 2: waitStove(f); break;
+    case 3: moveFishToTable(f); break;
+    case 4: waitTable(f); break;
+    case 5: moveToBed(f); break;
+    case 6: waitBed(f); break;
+    case 7: restartCycle(f); break;
+  }
+}
+
+function setHomeFurnitureRefs(f) {
+  if (!f.fishDelivery) {
+    let fd = fishDeliveries.find(x => x.placed);
+    if (fd) f.fishDelivery = fd;
+  }
+  if (!f.stove) {
+    let st = stoves.find(x => x.placed);
+    if (st) f.stove = st;
+  }
+  if (!f.dinnerTable) {
+    let dt = dinnerTables.find(x => x.placed);
+    if (dt) f.dinnerTable = dt;
+  }
+  if (!f.bed) {
+    let b = beds.find(x => x.placed);
+    if (b) f.bed = b;
+  }
+}
+
+function moveTowards(pos, target, speed) {
+  let dir = p5.Vector.sub(target, pos);
+  if (dir.mag() > 1) {
+    dir.setMag(speed);
+    pos.add(dir);
+  }
+}
+
+function waitForFish(f) {
+  let dist = p5.Vector.dist(f.pos, f.fishDelivery.pos);
+  if (dist > 30) {
+    moveTowards(f.pos, f.fishDelivery.pos, f.followSpeed);
+  } else {
+    if (fishOnStation()) {
+      fish.carriedBy = "follower-home";
+      f.state = 1;
+    }
+  }
+}
+
+function fishOnStation() {
+  return fish.carriedBy === null && fish.pos.x > -999 && fish.pos.y > -999;
+}
+
+function moveFishToStove(f) {
+  if (fish.carriedBy === "follower-home") {
+    fish.pos = f.pos.copy();
+  }
+  let dist = p5.Vector.dist(f.pos, f.stove.pos);
+  if (dist > 30) {
+    moveTowards(f.pos, f.stove.pos, f.followSpeed);
+  } else {
+    fish.carriedBy = null;
+    fish.pos = f.stove.pos.copy();
+    f.state = 2;
+    f.waitingSince = millis();
+  }
+}
+
+function waitStove(f) {
+  if (millis() - f.waitingSince > 3000) {
+    fish.carriedBy = "follower-home";
+    f.state = 3;
+  }
+}
+
+function moveFishToTable(f) {
+  if (fish.carriedBy === "follower-home") {
+    fish.pos = f.pos.copy();
+  }
+  let dist = p5.Vector.dist(f.pos, f.dinnerTable.pos);
+  if (dist > 30) {
+    moveTowards(f.pos, f.dinnerTable.pos, f.followSpeed);
+  } else {
+    fish.carriedBy = null;
+    fish.pos = f.dinnerTable.pos.copy();
+    f.state = 4;
+    f.waitingSince = millis();
+  }
+}
+
+function waitTable(f) {
+  if (millis() - f.waitingSince > 3000) {
+    f.state = 5;
+  }
+}
+
+function moveToBed(f) {
+  let dist = p5.Vector.dist(f.pos, f.bed.pos);
+  if (dist > 30) {
+    moveTowards(f.pos, f.bed.pos, f.followSpeed);
+  } else {
+    f.state = 6;
+    f.waitingSince = millis();
+    spawnZParticle(f);
+  }
+}
+
+function waitBed(f) {
+  if (random() < 0.02) {
+    spawnZParticle(f);
+  }
+  if (millis() - f.waitingSince > 3000) {
+    f.state = 7;
+    f.zParticles = [];
+  }
+}
+
+function restartCycle(f) {
+  let dist = p5.Vector.dist(f.pos, f.fishDelivery.pos);
+  if (dist > 30) {
+    moveTowards(f.pos, f.fishDelivery.pos, f.followSpeed);
+  } else {
+    // spawn new drone
+    drone.state = 0;
+    drone.pos = p5.Vector.sub(f.fishDelivery.pos, createVector(500, 0));
+    drone.hasFish = true;
+    fish.pos = createVector(-9999, -9999);
+    fish.carriedBy = null;
+    f.state = 0;
+  }
+}
+
+// ------------------------- RESTAURANT consumer -------------------------
+
+function updateRestaurantConsumer(f) {
+  setRestaurantFurnitureRefs(f);
+
+  // If missing furniture, follow player
+  if (!f.restaurantBed || !f.restaurantDiningTable) {
+    moveTowards(f.pos, player, f.followSpeed);
+    return;
+  }
+
+  switch (f.state) {
+    case 0: waitForBedAvailable(f); break;
+    case 1: sleepInBed(f); break;
+    case 2: moveToRestaurantTable(f); break;
+    case 3: waitAtRestaurantTable(f); break;
+    case 4: returnToBed(f); break;
+  }
+}
+
+function setRestaurantFurnitureRefs(f) {
+  if (!f.restaurantBed) {
+    let rb = restaurantBeds.find(x => x.placed);
+    if (rb) f.restaurantBed = rb;
+  }
+  if (!f.restaurantDiningTable) {
+    let rt = restaurantDiningTables.find(x => x.placed);
+    if (rt) f.restaurantDiningTable = rt;
+  }
+}
+
+function waitForBedAvailable(f) {
+  let dist = p5.Vector.dist(f.pos, f.restaurantBed.pos);
+  if (dist > 30) {
+    moveTowards(f.pos, f.restaurantBed.pos, f.followSpeed);
+  } else {
+    f.state = 1;
+    f.waitingSince = millis();
+    spawnZParticle(f);
+  }
+}
+
+function sleepInBed(f) {
+  if (random() < 0.02) {
+    spawnZParticle(f);
+  }
+  if (millis() - f.waitingSince > 3000) {
+    f.zParticles = [];
+    f.state = 2;
+  }
+}
+
+function moveToRestaurantTable(f) {
+  let dist = p5.Vector.dist(f.pos, f.restaurantDiningTable.pos);
+  if (dist > 30) {
+    moveTowards(f.pos, f.restaurantDiningTable.pos, f.followSpeed);
+  } else {
+    f.state = 3;
+    f.waitingSince = millis();
+  }
+}
+
+function waitAtRestaurantTable(f) {
+  if (millis() - f.waitingSince > 3000) {
+    f.state = 4;
+  }
+}
+
+function returnToBed(f) {
+  let dist = p5.Vector.dist(f.pos, f.restaurantBed.pos);
+  if (dist > 30) {
+    moveTowards(f.pos, f.restaurantBed.pos, f.followSpeed);
+  } else {
+    f.state = 1;
+    f.waitingSince = millis();
+    spawnZParticle(f);
+  }
+}
+
+// --------------------------------------------------------------------------
+// “Z” PARTICLES
+// --------------------------------------------------------------------------
+
+function spawnZParticle(f) {
+  let zx = f.pos.x + random(-5, 5);
+  let zy = f.pos.y - 20 + random(-5, 5);
+  let z = {
+    x: zx,
+    y: zy,
+    vy: random(-0.3, -0.6),
+    size: random(10, 14),
+    alpha: 255
+  };
+  f.zParticles.push(z);
+}
+
+function updateZParticles(f) {
+  for (let z of f.zParticles) {
+    z.y += z.vy;
+    z.alpha -= 2;
+  }
+  f.zParticles = f.zParticles.filter(z => z.alpha > 0);
+}
+
+// --------------------------------------------------------------------------
+// ON-SCREEN INSTRUCTIONS
+// --------------------------------------------------------------------------
+
+function drawInstructions() {
+  push();
+  resetMatrix();
+  fill(0);
+  textSize(14);
+  textAlign(LEFT, TOP);
+
+  let txt =
+    "Automatic Setup:\n\n" +
+    "ABOVE (y=-300, left->right):\n" +
+    "  Lobby, Kitchen, Bedroom\n" +
+    "  (Home furniture near Kitchen center)\n\n" +
+    "BELOW (y=+300, left->right):\n" +
+    "  Another Bedroom, Restaurant Floor\n" +
+    "  (Restaurant furniture near each)\n\n" +
+    "FOLLOWERS:\n" +
+    " - Green = HOME consumer (fish->stove->table->bed->repeat)\n" +
+    " - Magenta = RESTAURANT consumer (bed->table->repeat)\n\n" +
+    "WASD = Move Player, Mouse Wheel = Zoom.\n\n" +
+    "Enjoy the spread-out floors & automatic cycles!";
+  text(txt, 10, 10);
+
+  pop();
+}
+
+function windowResized() {
+  resizeCanvas(windowWidth, windowHeight);
+}
+</script>
+</body>
+</html>
