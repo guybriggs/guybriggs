@@ -1,0 +1,1131 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>p5.js Multiple Followers + New Dialogue</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.6.0/p5.min.js"></script>
+  <style>
+    body { margin: 0; overflow: hidden; }
+    #furnitureMenu {
+      position: absolute;
+      background: #eee;
+      border: 2px solid #333;
+      border-radius: 5px;
+      display: none;
+      padding: 5px;
+      pointer-events: auto;
+    }
+    #furnitureMenu button {
+      display: block;
+      margin: 5px 0;
+      width: 120px;
+      cursor: pointer;
+      font-size: 14px;
+    }
+  </style>
+</head>
+<body>
+
+<!-- Popup DIV for choosing furniture -->
+<div id="furnitureMenu"></div>
+
+<script>
+// ============================================================================
+// GLOBALS & DATA
+// ============================================================================
+
+// Player & movement
+let player;
+let zoom = 1;
+let speed = 5;
+
+// The first follower (original)
+let follower1 = {
+  pos: null,
+  followSpeed: 3,
+  color: [255, 255, 255],
+  detached: false, // becomes true once a floor stroke is drawn
+  // Updated route order: first demand a "Bed", then "Fish Delivery", then "Stove", then "Dinner Table"
+  route: ["Bed", "Fish Delivery", "Stove", "Dinner Table"],
+  routeIndex: 0,
+  routeState: "moving", // can be "moving" or "waiting"
+  waitStartTime: 0,
+  waitDelay: 2000,    // 2-second pause when arriving at a target
+  routeCompletes: 0   // number of times the full chain has been completed
+};
+
+// The second follower (new), starts inactive
+let follower2 = {
+  active: false,
+  pos: null,
+  followSpeed: 3,
+  color: [255, 200, 0],
+  hasHouse: false,     // once they get at least 1 floor stroke, we consider them housed
+  dialogueState: 0,    // which line of dialogue they're on
+  dialogueActive: false, 
+  lines: [
+    // 0
+    "This neighbourhood is pretty nice... got room for one more?",
+    // 1
+    "I'm not really one for home-cooking; is there a restaurant around here?"
+  ],
+  currentText: "",
+  index: 0,
+  lastUpdate: 0,
+  interval: 50,
+  finishedTime: null
+};
+
+// Floor strokes & furniture
+let strokes = [];          
+let furnitureStrokes = []; 
+let currentStroke = null;
+let activeColor = null;
+let brushSize = 50;
+
+// UI (sidebar)
+let colorPalette = [
+  "#e6194B", "#3cb44b", "#ffe119", "#4363d8", "#f58231",
+  "#911eb4", "#46f0f0", "#f032e6", "#bcf60c", "#fabebe"
+];
+let sidebarWidth = 60;
+let buttonSize = 40;
+let buttonSpacing = 10;
+
+let furnitureMenuEl;
+
+// Particle system (teal orbs at dinner table)
+let particles = [];
+let lastParticleSpawn = 0;
+
+// Main (follower1) dialogue lines
+// For follower1 – note the injected bed requirement (dialogueState 1) before the fish dialogue (dialogueState 2)
+let dialogueList = [
+  "Brr! It's freezing out here. Can we build a house?",
+  "I'm tired I need a bed",
+  "Are you hungry? I'm hungry. Let's cook some fish!"
+];
+
+// For follower2 – we insert a new dialogue for the bed demand as well
+follower2.lines = [
+  "This neighbourhood is pretty nice... got room for one more?",
+  "I'm tired I need a bed",
+  "I'm not really one for home-cooking; is there a restaurant around here?"
+];
+let dialogueState = 0; // 0 => "Brr!", 1 => "Are you hungry?"
+let dialogue = {
+  active: false,
+  fullText: dialogueList[0],
+  currentText: "",
+  index: 0,
+  lastUpdate: 0,
+  interval: 50,
+  finishedTime: null
+};
+
+// After first chain completes
+let chainCompleteLine = "Ah, but what good is food without neighbours to share it with?";
+let spawnedFollower2 = false; // we only spawn them once
+
+// Furniture synergy & cost data
+let synergy = {
+  "Fish Delivery": { requires: "Floor" },
+  "Stove":         { requires: "Floor" },
+  "Dinner Table":  { requires: null },
+  "Bed":           { requires: null },
+  "Plant":         { requires: null },
+  "Rug":           { requires: null }
+};
+let costItems = ["Fish Delivery","Stove"];
+let itemCosts = {};
+let placedFurniture = [];
+let allFurnitureOptions = ["Fish Delivery", "Stove", "Dinner Table", "Bed", "Plant", "Rug", "Frozen Fish Storage", "Frozen Potato Storage", "Fryer", "Reception", "Seating"];
+
+// ----------------------------------------------------------------------------
+// SETUP
+// ----------------------------------------------------------------------------
+function setup() {
+  createCanvas(windowWidth, windowHeight);
+  player = createVector(0, 0);
+  
+  // Follower1 initial position
+  follower1.pos = createVector(100, 100);
+  
+  // Follower2 starts inactive, place them somewhere off to the side
+  follower2.pos = createVector(300, 0);
+  
+  furnitureMenuEl = select('#furnitureMenu');
+  furnitureMenuEl.hide();
+  // Stop clicks from going to canvas
+  furnitureMenuEl.elt.addEventListener('mousedown', e => e.stopPropagation());
+  furnitureMenuEl.elt.addEventListener('mouseup',   e => e.stopPropagation());
+  furnitureMenuEl.elt.addEventListener('click',     e => e.stopPropagation());
+
+  updateSynergyData();
+  startWindEffect();
+}
+
+// ----------------------------------------------------------------------------
+// DRAW LOOP
+// ----------------------------------------------------------------------------
+function draw() {
+  background(220);
+  
+  // Always let player move
+  handleInput();
+  
+  // follower1 either chases player or does route
+  if (!follower1.detached) {
+    updateFollower1Follow();
+  } else {
+    updateFollower1Route();
+  }
+
+  if (!follower2.detached) {
+    updateFollower2Follow();
+  }
+
+  // =============== CAMERA / WORLD TRANSFORM ===============
+  push();
+    translate(width/2, height/2);
+    scale(zoom);
+    translate(-player.x, -player.y);
+    
+    drawGrid();
+    
+    // floor
+    for (let s of strokes) {
+      drawStroke(s,false);
+    }
+    // furniture
+    for (let f of furnitureStrokes) {
+      drawStroke(f,true);
+    }
+    
+    // current stroke (being drawn)
+    if (currentStroke) {
+      drawStroke(currentStroke, currentStroke.isFurniture);
+    }
+    
+    // Player
+    fill(0,0,255);
+    noStroke();
+    ellipse(player.x, player.y,20,20);
+    
+    // follower1
+    fill(follower1.color);
+    ellipse(follower1.pos.x, follower1.pos.y,20,20);
+    
+    // follower2, if active
+    if (follower2.active) {
+      fill(follower2.color);
+      ellipse(follower2.pos.x, follower2.pos.y,20,20);
+    }
+
+    // In your main draw() function, add these calls (e.g., after drawing the followers):
+    if (windActive) {
+      updateWindTriangles();
+      drawWindTriangles();
+    }
+    
+    // teal orbs at dinner table
+    updateParticles(follower1);
+    drawParticles();
+  pop();
+  
+  // synergy labels, cost, "Needs X"
+  drawFurnitureLabels();
+  
+  // main follower1 dialogue
+  handleFollower1Dialogue();
+  
+  // follower2 dialogue
+  handleFollower2Dialogue();
+  
+  // draw sidebar
+  drawSidebar();
+}
+
+// ----------------------------------------------------------------------------
+// PLAYER MOVEMENT
+// ----------------------------------------------------------------------------
+function handleInput() {
+  if (keyIsDown(87)) player.y -= speed; // W
+  if (keyIsDown(83)) player.y += speed; // S
+  if (keyIsDown(65)) player.x -= speed; // A
+  if (keyIsDown(68)) player.x += speed; // D
+}
+
+// ----------------------------------------------------------------------------
+// FOLLOWER1: DETACH & ROUTE
+// ----------------------------------------------------------------------------
+function updateFollower1Follow() {
+  // chase player if not detached
+  let desiredSpacing = 30;
+  let dir = p5.Vector.sub(player, follower1.pos);
+  let distToPlayer = dir.mag();
+  if (distToPlayer > desiredSpacing) {
+    dir.setMag(follower1.followSpeed);
+    follower1.pos.add(dir);
+  }
+}
+
+function updateFollower2HouseTarget() {
+  // If follower2 has a house but is not yet detached, detach and set a house target.
+  if (follower2.active && follower2.hasHouse && !follower2.detached) {
+    follower2.detached = true;
+    // Set the target to the center of the floor strokes (i.e. the house center).
+    follower2.houseTarget = getFloorCenter(strokes);
+  }
+  // If detached and still in house mode (i.e. restaurant not built yet), smoothly move toward the house center.
+  if (follower2.detached && !restaurantComplete && follower2.houseTarget) {
+    let dir = p5.Vector.sub(follower2.houseTarget, follower2.pos);
+    if (dir.mag() > 5) {
+      dir.setMag(follower2.followSpeed);
+      follower2.pos.add(dir);
+    }
+  }
+}
+
+function updateFollower2Follow() {
+  if (follower2.active) {
+    if (follower2.detached && follower2.targetPos) {
+      let dir = p5.Vector.sub(follower2.targetPos, follower2.pos);
+      if (dir.mag() > 1) {
+        dir.setMag(follower2.followSpeed);
+        follower2.pos.add(dir);
+      }
+    } else {
+      // Follow the player if not detached
+      let desiredSpacing = 30;
+      let dir = p5.Vector.sub(player, follower2.pos);
+      let d = dir.mag();
+      if (d > desiredSpacing) {
+        dir.setMag(follower2.followSpeed);
+        follower2.pos.add(dir);
+      }
+    }
+  }
+}
+
+function maybeDetachFollower1() {
+  if (!follower1.detached && strokes.length > 0) {
+    // Once at least one floor stroke is drawn, detach follower1 and move them to the house center.
+    follower1.detached = true;
+    let c = getFloorCenter(strokes);
+    follower1.pos.set(c.x, c.y);
+  }
+}
+
+function maybeDetachFollower2() {
+  if (follower2.active && follower2.hasHouse && !follower2.detached && strokes.length > 0 && follower2.houseCreatedTime) {
+    follower2.detached = true;
+    let center = getHouseCenter(strokes, follower2.houseCreatedTime);
+    follower2.pos.set(center.x, center.y);
+  }
+}
+
+function updateFollower1Route() {
+  // If waiting at the current target, check if it's time to move on.
+  if (follower1.routeState === "waiting") {
+    if (millis() - follower1.waitStartTime > follower1.waitDelay) {
+      let oldIndex = follower1.routeIndex;
+      follower1.routeIndex = (follower1.routeIndex + 1) % follower1.route.length;
+      follower1.routeState = "moving";
+      // When a full cycle is completed, trigger the chain-complete dialogue if needed.
+      if (follower1.routeIndex === 0 && oldIndex === follower1.route.length - 1) {
+        follower1.routeCompletes++;
+        if (follower1.routeCompletes === 1 && !spawnedFollower2) {
+          showChainCompleteDialogue();
+        }
+      }
+    }
+    return;
+  }
+  
+  // Determine the current target furniture item.
+  let targetItem = follower1.route[follower1.routeIndex];
+  let strokeObj = getStrokeForItem(targetItem);
+  if (!strokeObj) {
+    // If the target item isn’t yet placed, skip to the next target.
+    follower1.routeIndex = (follower1.routeIndex + 1) % follower1.route.length;
+    return;
+  }
+  
+  // Move follower1 toward the center of the target furniture.
+  let avgPos = getStrokeCenter(strokeObj);
+  let dir = p5.Vector.sub(avgPos, follower1.pos);
+  let d = dir.mag();
+  if (d > 5) {
+    dir.setMag(follower1.followSpeed);
+    follower1.pos.add(dir);
+  } else {
+    // When arrived, switch to waiting mode.
+    follower1.routeState = "waiting";
+    follower1.waitStartTime = millis();
+  }
+}
+
+// Once chain completes, we show a new line & spawn follower2
+function showChainCompleteDialogue() {
+  spawnedFollower2 = true;
+  // show the "Ah, but what good is food without neighbours to share it with?" line
+  dialogue.active = true;
+  dialogue.index = 0;
+  dialogue.currentText = "";
+  dialogue.lastUpdate = 0;
+  dialogue.finishedTime = null;
+  dialogue.fullText = chainCompleteLine;
+  
+  // spawn follower2 attached to the player
+  follower2.active = true;
+  // place follower2 near the player (e.g., 50 pixels to the right)
+  follower2.pos.set(player.x + 50, player.y);
+}
+
+
+// ----------------------------------------------------------------------------
+// FOLLOWER2: DIALOGUE, HOUSE
+// ----------------------------------------------------------------------------
+function handleFollower2Dialogue() {
+  if (!follower2.active) return;
+  
+  // Show exclamation based on follower2's own dialogue state.
+  let d = dist(player.x, player.y, follower2.pos.x, follower2.pos.y);
+  if (d < 100 && !follower2.dialogueActive) {
+    if (follower2.dialogueState === 0 && !follower2.hasHouse) {
+      drawExclamationOver(follower2.pos);
+    } else if (follower2.dialogueState === 1 && !placedFurniture.includes("Bed")) {
+      drawExclamationOver(follower2.pos);
+    } else if (follower2.dialogueState === 2 && placedFurniture.includes("Bed") && !placedFurniture.includes("Fish Delivery")) {
+      drawExclamationOver(follower2.pos);
+    }
+  }
+  
+  // Typewriter effect for follower2's dialogue.
+  if (follower2.dialogueActive) {
+    let full = follower2.lines[follower2.dialogueState];
+    if (follower2.index < full.length) {
+      follower2.lastUpdate += deltaTime;
+      if (follower2.lastUpdate > follower2.interval) {
+        follower2.currentText += full.charAt(follower2.index);
+        follower2.index++;
+        follower2.lastUpdate = 0;
+      }
+    } else {
+      if (follower2.finishedTime === null) {
+        follower2.finishedTime = millis();
+      }
+      if (millis() - follower2.finishedTime > 3000) {
+        follower2.dialogueActive = false;
+        follower2.finishedTime = null;
+        follower2.dialogueState++;
+      }
+    }
+    
+    let sp = worldToScreen(follower2.pos);
+    let x = sp.x, y = sp.y;
+    textSize(16);
+    textAlign(LEFT, TOP);
+    let pad = 10;
+    let tw = textWidth(follower2.currentText);
+    let bw = tw + pad * 2;
+    let bh = 30;
+    fill(255);
+    stroke(0);
+    strokeWeight(2);
+    rect(x - bw / 2, y - 80, bw, bh, 5);
+    noStroke();
+    fill(0);
+    text(follower2.currentText, x - bw / 2 + pad, y - 80 + pad / 2);
+  }
+}
+
+// Called once we place a floor stroke; if follower2 is active and doesn't have house => set hasHouse = true
+function maybeSetFollower2HasHouse() {
+  if (!follower2.active) return;
+  if (!follower2.hasHouse) {
+    // any floor stroke => consider them "housed"
+    follower2.hasHouse = true;
+  }
+}
+
+function engageFollower2Dialogue() {
+  if (follower2.dialogueState > 1) return; // no more lines
+  follower2.dialogueActive = true;
+  follower2.index = 0;
+  follower2.currentText = "";
+  follower2.lastUpdate = 0;
+  follower2.finishedTime = null;
+}
+
+// ----------------------------------------------------------------------------
+// MAIN DIALOGUE (FOLLOWER1)
+// ----------------------------------------------------------------------------
+function handleFollower1Dialogue() {
+  // Show exclamation if the player is near and the current demand isn’t met.
+  if (!dialogue.active) {
+    let d = dist(player.x, player.y, follower1.pos.x, follower1.pos.y);
+    if (d < 100) {
+      if (dialogueState === 0 && strokes.length === 0) {
+        drawExclamationOver(follower1.pos);
+      } else if (dialogueState === 1 && !placedFurniture.includes("Bed")) {
+        drawExclamationOver(follower1.pos);
+      } else if (dialogueState === 2 && !placedFurniture.includes("Fish Delivery")) {
+        drawExclamationOver(follower1.pos);
+      }
+    }
+  }
+  
+  // When the house (floor strokes) is built, advance to the bed demand.
+  if (dialogueState === 0 && strokes.length > 0) {
+    dialogueState = 1;
+  }
+  
+  // Typewriter effect for the dialogue bubble.
+  if (dialogue.active) {
+    if (dialogue.index < dialogue.fullText.length) {
+      dialogue.lastUpdate += deltaTime;
+      if (dialogue.lastUpdate > dialogue.interval) {
+        dialogue.currentText += dialogue.fullText.charAt(dialogue.index);
+        dialogue.index++;
+        dialogue.lastUpdate = 0;
+      }
+    } else {
+      if (dialogue.finishedTime === null) {
+        dialogue.finishedTime = millis();
+      }
+      if (millis() - dialogue.finishedTime > 3000) {
+        dialogue.active = false;
+        dialogue.finishedTime = null;
+        if (dialogueState < dialogueList.length) {
+          dialogueState++;
+        }
+      }
+    }
+    
+    let sp = worldToScreen(follower1.pos);
+    let x = sp.x, y = sp.y;
+    textSize(16);
+    textAlign(LEFT, TOP);
+    let pad = 10;
+    let tw = textWidth(dialogue.currentText);
+    let bw = tw + pad * 2;
+    let bh = 30;
+    fill(255);
+    stroke(0);
+    rect(x - bw / 2, y - 80, bw, bh, 5);
+    noStroke();
+    fill(0);
+    text(dialogue.currentText, x - bw / 2 + pad, y - 80 + pad / 2);
+  }
+}
+
+// ----------------------------------------------------------------------------
+// PARTICLES: TEAL ORBS AT DINNER TABLE
+// ----------------------------------------------------------------------------
+function updateParticles(fw) {
+  if (fw.routeState === "waiting" && fw.route[fw.routeIndex] === "Dinner Table") {
+    let now = millis();
+    if (now - lastParticleSpawn > 200) {
+      lastParticleSpawn = now;
+      spawnParticle(fw.pos);
+    }
+  }
+  
+  for (let p of particles) {
+    p.pos.add(p.vel);
+    p.alpha -= 3;
+  }
+  particles = particles.filter(p => p.alpha>0);
+}
+
+function spawnParticle(pos) {
+  let px = pos.x + random(-10,10);
+  let py = pos.y + random(-10,10);
+  let vx = random(-0.5,0.5);
+  let vy = random(-1, -2);
+  let p = { pos: createVector(px, py), vel: createVector(vx, vy), alpha:255 };
+  particles.push(p);
+}
+
+function drawParticles() {
+  noStroke();
+  for (let p of particles) {
+    fill(0,200,200, p.alpha);
+    ellipse(p.pos.x, p.pos.y, 8,8);
+  }
+}
+
+// ----------------------------------------------------------------------------
+// FURNITURE LABELS: Synergy, cost, "Needs X"
+// ----------------------------------------------------------------------------
+function drawFurnitureLabels() {
+  push();
+  textAlign(CENTER, BOTTOM);
+  textSize(16);
+  strokeWeight(2);
+  
+  for (let f of furnitureStrokes) {
+    if (!f.itemName) continue;
+    
+    let item = f.itemName;
+    let c = getStrokeCenter(f);
+    let sx = (c.x - player.x) * zoom + width / 2;
+    let sy = (c.y - player.y) * zoom + height / 2;
+    
+    let needsMessages = [];
+    
+    // Check synergy requirements – if missing floor, show "Needs floor"
+    if (!checkSynergy(item)) {
+      let req = synergy[item]?.requires;
+      if (req === "Floor") needsMessages.push("Needs floor");
+    }
+    
+    // Check for custom needs (e.g., Needs stove/table/bed)
+    let custom = checkCustomNeeds(item);
+    if (custom) {
+      needsMessages.push(custom);
+    }
+    
+    // Only add money cost if no "needs" message exists
+    if (needsMessages.length === 0 && costItems.includes(item)) {
+      if (!itemCosts[item]) {
+        itemCosts[item] = floor(random(5, 16));
+      }
+      needsMessages.push(`-$${itemCosts[item]}.00`);
+    }
+    
+    // If there’s nothing to display, skip drawing a label
+    if (needsMessages.length === 0) continue;
+    
+    let lines = needsMessages;
+    let txt = lines.join("\n");
+    let splitted = txt.split("\n");
+    let maxW = splitted.reduce((acc, ln) => max(acc, textWidth(ln)), 0);
+    let w = maxW + 10;
+    let h = splitted.length * 20 + 5;
+    
+    fill(255);
+    stroke(0);
+    rectMode(CENTER);
+    rect(sx, sy - 40, w, h, 5);
+    
+    noStroke();
+    fill(0);
+    let startY = sy - 40 - h / 2 + 5;
+    splitted.forEach((line, i) => {
+      text(line, sx, startY + i * 20 + 15);
+    });
+  }
+  
+  pop();
+}
+
+function checkCustomNeeds(item) {
+  if (item === "Fish Delivery") {
+    if (placedFurniture.includes("Fish Delivery") && !placedFurniture.includes("Stove")) {
+      return "Needs stove";
+    }
+  }
+  if (item === "Stove") {
+    if (placedFurniture.includes("Stove") && !placedFurniture.includes("Dinner Table")) {
+      return "Needs table";
+    }
+  }
+  if (item === "Dinner Table") {
+    if (placedFurniture.includes("Dinner Table") && !placedFurniture.includes("Bed")) {
+      return "Needs bed";
+    }
+  }
+  // Restaurant items custom needs:
+  if (item === "Fryer") {
+    if (!placedFurniture.includes("Frozen Fish Storage") || !placedFurniture.includes("Frozen Potato Storage")) {
+      return "Needs Frozen Fish Storage and Frozen Potato Storage";
+    }
+  }
+  if (item === "Reception") {
+    if (!placedFurniture.includes("Fryer")) {
+      return "Needs Fryer";
+    }
+  }
+  if (item === "Seating") {
+    if (!placedFurniture.includes("Reception")) {
+      return "Needs Reception";
+    }
+  }
+  return null;
+}
+
+function checkSynergy(itemName) {
+  let req = synergy[itemName]?.requires;
+  if (!req) return true;
+  
+  // If the requirement is a string.
+  if (typeof req === "string") {
+    if (req === "Floor") return (strokes.length > 0);
+    if (req === "restaurant consumer") return (follower2.detached === true);
+    return placedFurniture.includes(req);
+  }
+  
+  // If the requirement is an array, ensure all are met.
+  if (Array.isArray(req)) {
+    return req.every(r => placedFurniture.includes(r));
+  }
+  
+  return false;
+}
+
+function updateSynergyData() {
+  // Existing household items remain unchanged.
+  synergy["Fish Delivery"] = { requires: "Floor" };
+  synergy["Stove"] = { requires: "Floor" };
+  synergy["Dinner Table"] = { requires: null };
+  synergy["Bed"] = { requires: null };
+  synergy["Plant"] = { requires: null };
+  synergy["Rug"] = { requires: null };
+  
+  // New restaurant items:
+  synergy["Frozen Fish Storage"] = { requires: null };
+  synergy["Frozen Potato Storage"] = { requires: null };
+  synergy["Fryer"] = { requires: ["Frozen Fish Storage", "Frozen Potato Storage"] };
+  synergy["Reception"] = { requires: "Fryer" };
+  synergy["Seating"] = { requires: "Reception" };
+}
+
+// ----------------------------------------------------------------------------
+// MOUSE & SIDEBAR
+// ----------------------------------------------------------------------------
+function mousePressed() {
+  // If clicked in sidebar
+  if (mouseX<sidebarWidth) {
+    let c = getColorFromSidebar(mouseX,mouseY);
+    if (c) activeColor=c;
+    return;
+  }
+  
+  // otherwise, start stroke in world space
+  let wpos = screenToWorld(mouseX, mouseY);
+  if (activeColor) {
+    // floor
+    currentStroke = { color:activeColor, points:[wpos], isFurniture:false };
+  } else {
+    // furniture
+    currentStroke = { color:[255,255,255], points:[wpos], isFurniture:true };
+  }
+}
+
+function mouseDragged() {
+  if (!currentStroke) return;
+  let wpos = screenToWorld(mouseX, mouseY);
+  let lastPos = currentStroke.points[currentStroke.points.length-1];
+  let d = dist(wpos.x, wpos.y, lastPos.x, lastPos.y);
+  
+  let w = currentStroke.isFurniture ? brushSize/2 : brushSize;
+  let step = w/4;
+  if (d>step) {
+    let steps = ceil(d/step);
+    for (let i=1; i<=steps; i++){
+      let inter = p5.Vector.lerp(lastPos, wpos, i/steps);
+      currentStroke.points.push(inter);
+    }
+  } else {
+    currentStroke.points.push(wpos);
+  }
+}
+
+function mouseReleased() {
+  if (!currentStroke) return;
+  if (!currentStroke.isFurniture) {
+    // floor stroke: tag it with a timestamp
+    currentStroke.timestamp = millis();
+    strokes.push(currentStroke);
+    // If follower2 isn't housed yet, mark this stroke as starting the new house
+    if (follower2.active && !follower2.hasHouse) {
+      follower2.hasHouse = true;
+      follower2.houseCreatedTime = currentStroke.timestamp;
+    }
+    currentStroke = null;
+    activeColor = null;
+    maybeDetachFollower1();
+    maybeDetachFollower2(); // Teleport follower2 to the center of the new house
+  } else {
+    // furniture stroke: build and show the furniture menu
+    furnitureMenuEl.html('');
+    let options = buildFurnitureList();
+    options.forEach(opt => {
+      let btn = createButton(opt.name);
+      btn.parent(furnitureMenuEl);
+      btn.style('background-color', opt.bg);
+      btn.mousePressed(() => {
+        currentStroke.itemName = opt.name;
+        currentStroke.color = getFurnitureColor(opt.name);
+        furnitureStrokes.push(currentStroke);
+        placedFurniture.push(opt.name);
+        
+        currentStroke = null;
+        furnitureMenuEl.hide();
+      });
+    });
+    furnitureMenuEl.show();
+    // Position the menu so that its vertical center is next to the mouse position.
+    let menuHeight = furnitureMenuEl.elt.offsetHeight;
+    furnitureMenuEl.position(mouseX, mouseY - menuHeight / 2);
+  }
+}
+
+// ----------------------------------------------------------------------------
+// KEY PRESSED: for dialogues
+// ----------------------------------------------------------------------------
+function keyPressed() {
+  if ((key==='e'|| key==='E')) {
+    // if main dialogue isn't active, we can talk to follower1 if close
+    if (!dialogue.active) {
+      let d1 = dist(player.x, player.y, follower1.pos.x, follower1.pos.y);
+      if (d1<100) {
+        if (dialogueState<dialogueList.length) {
+          // start next line
+          dialogue.active=true;
+          dialogue.index=0;
+          dialogue.currentText="";
+          dialogue.lastUpdate=0;
+          dialogue.finishedTime=null;
+          dialogue.fullText=dialogueList[dialogueState];
+        }
+      }
+    }
+    
+    // if follower2 is active & not in dialogue
+    if (follower2.active && !follower2.dialogueActive) {
+      let d2 = dist(player.x, player.y, follower2.pos.x, follower2.pos.y);
+      if (d2<100) {
+        // start their line
+        engageFollower2Dialogue();
+      }
+    }
+  }
+}
+
+// ----------------------------------------------------------------------------
+// HELPERS
+// ----------------------------------------------------------------------------
+function getStrokeForItem(name){
+  for (let f of furnitureStrokes){
+    if (f.itemName===name) return f;
+  }
+  return null;
+}
+function getStrokeCenter(st){
+  let sum=createVector(0,0);
+  for (let p of st.points){
+    sum.add(p);
+  }
+  sum.div(st.points.length);
+  return sum;
+}
+function getFloorCenter(strokesArr){
+  let total=createVector(0,0); 
+  let count=0;
+  for (let s of strokesArr){
+    for (let p of s.points){
+      total.add(p);
+      count++;
+    }
+  }
+  if (count===0) return createVector(player.x, player.y);
+  total.div(count);
+  return total;
+}
+
+// Dialogue exclamation over a position
+function drawExclamationOver(pos){
+  let sp = worldToScreen(pos);
+  fill(255,255,0);
+  textSize(32);
+  textAlign(CENTER, CENTER);
+  text("!", sp.x, sp.y-40);
+}
+
+function worldToScreen(v){
+  return createVector( (v.x - player.x)*zoom + width/2,
+                       (v.y - player.y)*zoom + height/2 );
+}
+
+function buildFurnitureList() {
+  // Determine the needed item based on the current dialogue demands:
+  let neededItem = null;
+  // If no bed has been placed, demand a bed – this covers both follower1 and follower2.
+  if (!placedFurniture.includes("Bed")) {
+    // For follower1, dialogueState 1 means they now need a bed.
+    // For follower2, dialogueState 1 means they need a bed.
+    if ((dialogueState === 1) || (follower2.active && follower2.hasHouse && follower2.dialogueState === 1)) {
+      neededItem = "Bed";
+    }
+  }
+  // Once a bed is placed, follower1 then requires Fish Delivery.
+  if (!neededItem && dialogueState === 2 && !placedFurniture.includes("Fish Delivery")) {
+    neededItem = "Fish Delivery";
+  }
+  
+  let synergyItems = [];
+  
+  // For follower1’s chain (after bed is built, the next required item is Fish Delivery)
+  if (placedFurniture.includes("Bed") && !placedFurniture.includes("Fish Delivery")) {
+    synergyItems.push("Fish Delivery");
+  }
+  if (placedFurniture.includes("Fish Delivery") && !placedFurniture.includes("Stove")) {
+    synergyItems.push("Stove");
+  }
+  if (placedFurniture.includes("Stove") && !placedFurniture.includes("Dinner Table")) {
+    synergyItems.push("Dinner Table");
+  }
+  
+  // New restaurant furniture logic – active when follower2 is detached.
+  if (follower2.detached) {
+    if (!placedFurniture.includes("Frozen Fish Storage")) {
+      synergyItems.push("Frozen Fish Storage");
+    }
+    if (!placedFurniture.includes("Frozen Potato Storage")) {
+      synergyItems.push("Frozen Potato Storage");
+    }
+    if (placedFurniture.includes("Frozen Fish Storage") && placedFurniture.includes("Frozen Potato Storage") && !placedFurniture.includes("Fryer")) {
+      synergyItems.push("Fryer");
+    }
+    if (placedFurniture.includes("Fryer") && !placedFurniture.includes("Reception")) {
+      synergyItems.push("Reception");
+    }
+    if (placedFurniture.includes("Reception") && !placedFurniture.includes("Seating")) {
+      synergyItems.push("Seating");
+    }
+  }
+  
+  let result = [];
+  for (let it of allFurnitureOptions) {
+    let bg = '#fff';
+    if (it === neededItem) {
+      bg = 'yellow';
+    } else if (synergyItems.includes(it)) {
+      bg = 'lightgreen';
+    }
+    result.push({ name: it, bg });
+  }
+  
+  result.sort((a, b) => {
+    let pa = (a.bg === 'yellow') ? 0 : (a.bg === 'lightgreen') ? 1 : 2;
+    let pb = (b.bg === 'yellow') ? 0 : (b.bg === 'lightgreen') ? 1 : 2;
+    return pa - pb;
+  });
+  
+  return result;
+}
+
+function getFurnitureColor(item) {
+  switch(item) {
+    case "Fish Delivery": return color(0, 150, 220);
+    case "Stove":         return color(60, 60, 60);
+    case "Dinner Table":  return color(150, 75, 0);
+    case "Bed":           return color(200, 0, 0);
+    case "Plant":         return color(0, 180, 0);
+    case "Rug":           return color(180, 0, 180);
+    case "Frozen Fish Storage":   return color(100, 200, 255);
+    case "Frozen Potato Storage": return color(255, 220, 100);
+    case "Fryer":                 return color(80, 80, 80);
+    case "Reception":             return color(120, 120, 255);
+    case "Seating":               return color(150, 75, 0);
+    default:                      return color(255);
+  }
+}
+
+// ----------------------------------------------------------------------------
+// SIDEBAR & GRID
+// ----------------------------------------------------------------------------
+function drawSidebar(){
+  noStroke();
+  fill(50,50,50,150);
+  rect(0,0, sidebarWidth, height);
+  
+  for (let i=0; i<colorPalette.length; i++){
+    let x=10, y=10+i*(buttonSize+buttonSpacing);
+    fill(colorPalette[i]);
+    rect(x,y, buttonSize,buttonSize);
+    
+    if (activeColor===colorPalette[i]){
+      stroke(255);
+      strokeWeight(3);
+      noFill();
+      rect(x,y, buttonSize, buttonSize);
+      noStroke();
+    }
+  }
+}
+
+function getColorFromSidebar(mx,my){
+  for (let i=0; i<colorPalette.length; i++){
+    let x=10, y=10+i*(buttonSize+buttonSpacing);
+    if (mx>=x && mx<=x+buttonSize && my>=y && my<=y+buttonSize){
+      return colorPalette[i];
+    }
+  }
+  return null;
+}
+
+function drawGrid(){
+  stroke(200);
+  strokeWeight(1);
+  let gridSize=50;
+  let startX=player.x - width/(2*zoom);
+  let endX=player.x + width/(2*zoom);
+  let startY=player.y - height/(2*zoom);
+  let endY=player.y + height/(2*zoom);
+  
+  for (let x=floor(startX/gridSize)*gridSize; x<endX; x+=gridSize){
+    line(x, startY, x, endY);
+  }
+  for (let y=floor(startY/gridSize)*gridSize; y<endY; y+=gridSize){
+    line(startX, y, endX, y);
+  }
+}
+
+function drawStroke(st, isFurniture){
+  let w = isFurniture? brushSize/2 : brushSize;
+  stroke(st.color);
+  strokeWeight(w);
+  strokeCap(ROUND);
+  noFill();
+  beginShape();
+  for (let pt of st.points){
+    vertex(pt.x, pt.y);
+  }
+  endShape();
+}
+
+// ----------------------------------------------------------------------------
+// MISC
+// ----------------------------------------------------------------------------
+function mouseWheel(e){
+  zoom -= e.delta*0.001;
+  zoom = constrain(zoom, 0.1, 5);
+  return false;
+}
+
+function windowResized(){
+  resizeCanvas(windowWidth, windowHeight);
+}
+
+function screenToWorld(sx, sy) {
+  let wx = (sx - width / 2) / zoom + player.x;
+  let wy = (sy - height / 2) / zoom + player.y;
+  return createVector(wx, wy);
+}
+
+// Add these global variables near your other globals:
+let windTriangles = [];
+let windActive = false;
+let windDialogue = {
+  active: false,
+  message: "Brr, it's cold!",
+  startTime: 0,
+  duration: 2000  // display for 2 seconds
+};
+
+// Call this function (for example, in setup()) to start the wind effect:
+function startWindEffect() {
+  windActive = true;
+  windTriangles = [];
+  let numTriangles = 20;     // number of triangles in the line
+  let spacing = 30;          // spacing between triangles
+  for (let i = 0; i < numTriangles; i++) {
+    // Start them off-screen in the top-left (adjust as needed)
+    let x = -1000 + i * spacing;
+    let y = -500 - i * spacing;
+    windTriangles.push({
+      pos: createVector(x, y),
+      startPos: createVector(x, y),
+      velocity: createVector(2, 2)  // moving southeast (adjust speed if desired)
+    });
+  }
+}
+
+// Update the wind triangles and check for collisions:
+function updateWindTriangles() {
+  for (let t of windTriangles) {
+    t.pos.add(t.velocity);
+    // Check collision with follower1 (change follower if needed)
+    if (!windDialogue.active) {
+      let d = dist(t.pos.x, t.pos.y, follower1.pos.x, follower1.pos.y);
+      if (d < 15) {  // collision threshold (adjust as needed)
+        windDialogue.active = true;
+        windDialogue.startTime = millis();
+      }
+    }
+  }
+  // Remove wind if the first triangle has traveled about a screen distance
+  if (windTriangles.length > 0) {
+    let t = windTriangles[0];
+    if (p5.Vector.dist(t.pos, t.startPos) > max(width, height)) {
+      windActive = false;
+      windTriangles = [];
+    }
+  }
+}
+
+// Draw the wind triangles (white triangles pointed southeast)
+function drawWindTriangles() {
+  push();
+  noStroke();
+  fill(255);  // white color
+  for (let t of windTriangles) {
+    push();
+    translate(t.pos.x, t.pos.y);
+    // Rotate so the tip points in the direction of movement
+    let angle = t.velocity.heading();
+    rotate(angle);
+    let size = 15;  // size of the triangle (adjust if needed)
+    // Draw a triangle with the tip on the right (pointing southeast)
+    triangle(size, 0, -size / 2, -size / 2, -size / 2, size / 2);
+    pop();
+  }
+  pop();
+}
+
+// Also, if a wind collision occurred, draw the dialogue bubble near follower1:
+if (windDialogue.active) {
+  let sp = worldToScreen(follower1.pos);
+  textSize(16);
+  textAlign(CENTER, BOTTOM);
+  fill(255);
+  stroke(0);
+  rectMode(CENTER);
+  let pad = 10;
+  let tw = textWidth(windDialogue.message);
+  let bw = tw + pad * 2;
+  let bh = 30;
+  rect(sp.x, sp.y - 40, bw, bh, 5);
+  noStroke();
+  fill(0);
+  text(windDialogue.message, sp.x, sp.y - 40 + pad);
+  // Turn off the dialogue after the duration expires
+  if (millis() - windDialogue.startTime > windDialogue.duration) {
+    windDialogue.active = false;
+  }
+}
+
+function getHouseCenter(strokesArr, houseTime) {
+  let total = createVector(0, 0);
+  let count = 0;
+  for (let s of strokesArr) {
+    // Only include strokes drawn after the house was started
+    if (s.timestamp >= houseTime) {
+      for (let p of s.points) {
+        total.add(p);
+        count++;
+      }
+    }
+  }
+  if (count === 0) return createVector(player.x, player.y);
+  total.div(count);
+  return total;
+}
+</script>
+</body>
+</html>
