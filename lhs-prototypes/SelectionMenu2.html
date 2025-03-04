@@ -1,0 +1,521 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>p5.js Floating Menu with Two-Phase (Color + Confirmation)</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.6.0/p5.min.js"></script>
+  <style>
+    body { margin: 0; overflow: hidden; }
+  </style>
+</head>
+<body>
+<script>
+  let player;
+  let zoom = 1;
+  let speed = 5;
+
+  // Follower
+  let follower = {
+    pos: null,
+    followSpeed: 3,
+    color: [255, 0, 0]
+  };
+
+  // Strokes
+  let strokes = [];         
+  let currentStroke = null; 
+
+  // When activeColor != null, the new stroke is solid.
+  let activeColor = null;
+  let brushSize = 50;
+
+  // ----- PALETTES & GRID DIMENSIONS -----
+  // Bottom-left palette: 30 unique colours in a 2 (rows) x 15 (columns) grid.
+  let bottomLeftPalette = [
+    "#e6194B", "#3cb44b", "#ffe119", "#4363d8", "#f58231",
+    "#911eb4", "#46f0f0", "#f032e6", "#bcf60c", "#fabebe",
+    "#008080", "#aaffc3", "#ffff99", "#dcbeff", "#a9a9a9",
+    "#ff1493", "#ff8c00", "#dda0dd", "#40e0d0", "#ffd700",
+    "#00ced1", "#7fffd4", "#ff69b4", "#8a2be2", "#00ff7f",
+    "#ff4500", "#2e8b57", "#4682b4", "#d2691e", "#b22222"
+  ];
+  // Floating palette (after drawing): 5 unique colours in a 1 (row) x 5 (columns) grid.
+  let floatingPalette = [
+    "#e6194B", "#3cb44b", "#ffe119", "#4363d8", "#f58231"
+  ];
+
+  // Grid parameters (same swatch size & margin for both modes)
+  let swatchSize = 40;
+  let margin = 10;
+  
+  // For bottom-left mode: 15 columns and 2 rows.
+  let bottomLeftCols = 15;
+  let bottomLeftRows = 2;
+  let bottomLeftGridWidth = margin + (swatchSize + margin) * bottomLeftCols;  
+  let bottomLeftGridHeight = margin + (swatchSize + margin) * bottomLeftRows; 
+  
+  // For floating mode: 5 columns and 1 row.
+  let floatingCols = 5;
+  let floatingRows = 1;
+  let floatingGridWidth = margin + (swatchSize + margin) * floatingCols;      
+  let floatingGridHeight = margin + (swatchSize + margin) * floatingRows;     
+
+  // Expanded (confirmation phase) widths:
+  let bottomLeftMenuWidthPhase1 = bottomLeftGridWidth + 200; // extra area for confirmation
+  let floatingMenuWidthPhase1 = floatingGridWidth + 200;
+  
+  // Menu animation settings:
+  let menuAnchor;               
+  let menuIsFloating = false;   
+  let menuIsOpen = false;   // menu starts closed  
+  let menuCurrentHeight = 0;    
+  let menuHeightMax = 300;      // used when in confirmation phase (Phase 1)
+  let menuLerpSpeed = 0.1;
+
+  // Phase: 0 = only colour swatches (narrow), 1 = expanded confirmation area.
+  let menuPhase = 0;
+  let menuCurrentWidth = 0;
+  
+  // The colour currently chosen in Phase 1 (but not yet finalized)
+  let pendingColor = null; 
+
+  // Flag to indicate that the click was handled by the menu UI.
+  let clickHandledByMenu = false;
+  
+  // Toggle button size.
+  let toggleButtonSize = 50;
+
+  function setup() {
+    createCanvas(windowWidth, windowHeight);
+    player = createVector(0, 0);
+    follower.pos = createVector(100, 100);
+    // Menu anchor defaults to bottom-left.
+    setMenuAnchorBottomLeft();
+  }
+
+  function draw() {
+    background(220);
+
+    // Compute target dimensions based on menu state:
+    let targetWidth, targetHeight;
+    if (menuIsOpen) {
+      if (menuPhase === 1) {
+        targetWidth = menuIsFloating ? floatingMenuWidthPhase1 : bottomLeftMenuWidthPhase1;
+        targetHeight = menuHeightMax;
+      } else {
+        targetWidth = menuIsFloating ? floatingGridWidth : bottomLeftGridWidth;
+        targetHeight = menuIsFloating ? floatingGridHeight : bottomLeftGridHeight;
+      }
+    } else {
+      targetWidth = 0;
+      targetHeight = 0;
+    }
+    menuCurrentHeight = lerp(menuCurrentHeight, targetHeight, menuLerpSpeed);
+    menuCurrentWidth  = lerp(menuCurrentWidth,  targetWidth,  menuLerpSpeed);
+
+    // When nearly closed, snap to 0 height.
+    if (!menuIsOpen && menuCurrentHeight < 0.5) {
+      menuCurrentHeight = 0;
+      if (closingToBottomLeft) {
+        setMenuAnchorBottomLeft();
+        closingToBottomLeft = false;
+      }
+    }
+
+    handleInput();
+
+    // ----- WORLD RENDERING -----
+    push();
+      translate(width / 2, height / 2);
+      scale(zoom);
+      translate(-player.x, -player.y);
+
+      drawGrid();
+      for (let s of strokes) {
+        drawStroke(s);
+      }
+      if (currentStroke) {
+        drawStroke(currentStroke);
+      }
+
+      // Draw player
+      fill(0, 0, 255);
+      noStroke();
+      ellipse(player.x, player.y, 20, 20);
+
+      // Draw follower
+      updateFollower();
+      fill(follower.color);
+      ellipse(follower.pos.x, follower.pos.y, 20, 20);
+    pop();
+
+    // ----- MENU & TOGGLE BUTTON -----
+    drawMenu();
+    drawToggleButton();
+  }
+
+  //-----------------------------
+  // MENU LAYOUT
+  //-----------------------------
+  function drawMenu() {
+    if (menuCurrentHeight <= 0) return; // menu is effectively hidden
+
+    // Menu anchor is treated as the bottom-left corner.
+    let x = menuAnchor.x;
+    let yTop = menuAnchor.y - menuCurrentHeight;
+    noStroke();
+    fill(50, 50, 50, 150);
+    rect(x, yTop, menuCurrentWidth, menuCurrentHeight);
+
+    // 1) Draw colour swatches grid.
+    drawColorSquares(x, yTop);
+
+    // 2) If in confirmation phase, draw the expanded area.
+    if (menuPhase === 1) {
+      drawConfirmationArea(x, yTop);
+    }
+  }
+
+  // Draws the colour swatches in a grid.
+  function drawColorSquares(menuX, menuYTop) {
+    let palette, cols;
+    if (menuIsFloating) {
+      palette = floatingPalette;
+      cols = floatingCols;  // for floating mode: 5 columns (1 row)
+    } else {
+      palette = bottomLeftPalette;
+      cols = bottomLeftCols; // for bottom-left mode: 15 columns (2 rows)
+    }
+    for (let i = 0; i < palette.length; i++) {
+      let col = i % cols;
+      let row = floor(i / cols);
+      let swatchX = menuX + margin + col * (swatchSize + margin);
+      let swatchY = menuYTop + margin + row * (swatchSize + margin);
+      // Only draw if the swatch fits within the current menu height.
+      if (swatchY + swatchSize > menuYTop + menuCurrentHeight) continue;
+      fill(palette[i]);
+      rect(swatchX, swatchY, swatchSize, swatchSize);
+    }
+  }
+
+  // Draw the expanded confirmation area to the right of the grid.
+  function drawConfirmationArea(menuX, menuYTop) {
+    let gridWidth = menuIsFloating ? floatingGridWidth : bottomLeftGridWidth;
+    let leftEdge = menuX + gridWidth;
+    let regionWidth = menuCurrentWidth - gridWidth;
+    let regionTop = menuYTop;
+    let regionHeight = menuCurrentHeight;
+
+    let pad = 10;
+    let contentX = leftEdge + pad;
+    let contentY = regionTop + pad;
+    let contentW = regionWidth - 2 * pad;
+    
+    // Big colour preview at the top.
+    let previewH = 80;
+    fill(pendingColor || 200);
+    rect(contentX, contentY, contentW, previewH);
+
+    // Dummy text below the preview.
+    let textY = contentY + previewH + 20; 
+    fill(255);
+    textSize(16);
+    textAlign(LEFT, TOP);
+    text("Some dummy text about this color.\nPick a different color if you like!\nWhen ready, press CREATE.", 
+         contentX, textY, contentW, 200);
+
+    // CREATE button near the bottom.
+    let buttonH = 40;
+    let buttonY = (regionTop + regionHeight) - pad - buttonH; 
+    fill(255);
+    rect(contentX, buttonY, contentW, buttonH);
+
+    fill(0);
+    textAlign(CENTER, CENTER);
+    textSize(18);
+    text("CREATE", contentX + contentW / 2, buttonY + buttonH / 2);
+  }
+
+  //-----------------------------
+  // FINALIZE COLOR SELECTION
+  //-----------------------------
+  function finalizeColorSelection() {
+    // If there is a temporary stroke in progress, finalize it.
+    if (currentStroke && currentStroke.isTemporary) {
+      currentStroke.color = pendingColor || '#000000';
+      currentStroke.isTemporary = false;
+      strokes.push(currentStroke);
+      currentStroke = null;
+      activeColor = null;
+    } else {
+      // Otherwise, set the chosen color for future strokes.
+      activeColor = pendingColor || '#000000';
+    }
+    pendingColor = null;
+    closeMenuSnapToBottomLeft();
+  }
+
+  let closingToBottomLeft = false;
+  function closeMenuSnapToBottomLeft() {
+    menuIsOpen = false;
+    menuPhase = 0; // reset to grid-only view next time it opens
+    if (menuIsFloating) {
+      closingToBottomLeft = true;
+    }
+  }
+
+  //-----------------------------
+  // TOGGLE BUTTON
+  //-----------------------------
+  function drawToggleButton() {
+    noStroke();
+    fill(100);
+    rect(0, height - toggleButtonSize, toggleButtonSize, toggleButtonSize);
+
+    fill(255);
+    textAlign(CENTER, CENTER);
+    textSize(16);
+    text(menuIsOpen ? "▲" : "▼",
+         toggleButtonSize / 2,
+         height - toggleButtonSize / 2);
+  }
+
+  function clickedToggleButton(mx, my) {
+    return (mx >= 0 && mx <= toggleButtonSize &&
+            my >= height - toggleButtonSize && my <= height);
+  }
+
+  //-----------------------------
+  // MOUSE / CLICK LOGIC
+  //-----------------------------
+  function mousePressed() {
+    // 1) Check toggle button.
+    if (clickedToggleButton(mouseX, mouseY)) {
+      setMenuAnchorBottomLeft();
+      closingToBottomLeft = false;
+      menuIsOpen = !menuIsOpen;
+      return;
+    }
+
+    // 2) If the menu is open, see if a click occurred within it.
+    if (menuIsOpen) {
+      // If in expanded confirmation area, check for a click on the CREATE button.
+      if (menuPhase === 1) {
+        let clickedCreate = checkCreateButton(mouseX, mouseY);
+        if (clickedCreate) {
+          clickHandledByMenu = true;
+          finalizeColorSelection();
+          return;
+        }
+      }
+      // Next, check if a color swatch was clicked.
+      let chosenColor = getColorFromMenu(mouseX, mouseY);
+      if (chosenColor) {
+        pendingColor = chosenColor;
+        menuPhase = 1;  // expand to show confirmation area
+        clickHandledByMenu = true;
+        return;
+      }
+    }
+
+    // 3) Otherwise, start a stroke if one isn’t already in progress.
+    if (!currentStroke) {
+      let worldPos = screenToWorld(mouseX, mouseY);
+      if (activeColor) {
+        currentStroke = {
+          color: activeColor,
+          points: [worldPos],
+          isTemporary: false
+        };
+      } else {
+        currentStroke = {
+          color: '#000000',
+          points: [worldPos],
+          isTemporary: true
+        };
+      }
+    }
+  }
+
+  function mouseDragged() {
+    if (currentStroke) {
+      let newPos = screenToWorld(mouseX, mouseY);
+      let lastPoint = currentStroke.points[currentStroke.points.length - 1];
+      let d = dist(newPos.x, newPos.y, lastPoint.x, lastPoint.y);
+      let step = brushSize / 4;
+      if (d > step) {
+        let steps = ceil(d / step);
+        for (let i = 1; i <= steps; i++) {
+          let inter = p5.Vector.lerp(lastPoint, newPos, i / steps);
+          currentStroke.points.push(inter);
+        }
+      } else {
+        currentStroke.points.push(newPos);
+      }
+    }
+  }
+
+  function mouseReleased() {
+    // If the click was handled by the menu, do not reposition the menu anchor.
+    if (clickHandledByMenu) {
+      clickHandledByMenu = false;
+      return;
+    }
+    
+    if (!currentStroke) return;
+
+    // For solid strokes, finalize immediately.
+    if (!currentStroke.isTemporary) {
+      strokes.push(currentStroke);
+      currentStroke = null;
+      activeColor = null;
+      closeMenuSnapToBottomLeft();
+    }
+    // For temporary strokes, open the floating menu at the mouse position.
+    else {
+      setMenuAnchorToMouse(mouseX, mouseY);
+      closingToBottomLeft = false;
+      menuIsOpen = true;
+      // Remain in Phase 0 until a color is picked.
+    }
+  }
+
+  // Check if the CREATE button was clicked in the expanded area.
+  function checkCreateButton(mx, my) {
+    if (menuPhase !== 1 || menuCurrentHeight <= 0) {
+      return false;
+    }
+    let x = menuAnchor.x;
+    let yTop = menuAnchor.y - menuCurrentHeight;
+    let gridWidth = menuIsFloating ? floatingGridWidth : bottomLeftGridWidth;
+    let leftEdge = x + gridWidth;
+    let regionWidth = menuCurrentWidth - gridWidth;
+    let pad = 10;
+    let contentX = leftEdge + pad;
+    let contentY = yTop + pad;
+    let buttonH = 40;
+    let buttonY = (yTop + menuCurrentHeight) - pad - buttonH;
+    return (mx >= contentX && mx <= contentX + (regionWidth - 2*pad) &&
+            my >= buttonY && my <= buttonY + buttonH);
+  }
+
+  // Get the color from the grid swatches based on mouse coordinates.
+  function getColorFromMenu(mx, my) {
+    let palette, cols;
+    if (menuIsFloating) {
+      palette = floatingPalette;
+      cols = floatingCols;
+    } else {
+      palette = bottomLeftPalette;
+      cols = bottomLeftCols;
+    }
+    let x = menuAnchor.x;
+    let y = menuAnchor.y - menuCurrentHeight;
+    let w = menuCurrentWidth;
+    let h = menuCurrentHeight;
+    if (mx < x || mx > x + w) return null;
+    if (my < y || my > y + h) return null;
+    for (let i = 0; i < palette.length; i++) {
+      let col = i % cols;
+      let row = floor(i / cols);
+      let swatchX = x + margin + col * (swatchSize + margin);
+      let swatchY = y + margin + row * (swatchSize + margin);
+      if (mx >= swatchX && mx <= swatchX + swatchSize &&
+          my >= swatchY && my <= swatchY + swatchSize) {
+        return palette[i];
+      }
+    }
+    return null;
+  }
+
+  //-----------------------------
+  // MENU ANCHOR & MOVEMENT
+  //-----------------------------
+  function setMenuAnchorBottomLeft() {
+    menuAnchor = createVector(0, height - toggleButtonSize);
+    menuIsFloating = false;
+  }
+
+  function setMenuAnchorToMouse(mx, my) {
+    menuAnchor = createVector(mx, my);
+    menuIsFloating = true;
+  }
+
+  //-----------------------------
+  // PLAYER/FOLLOWER & UTILS
+  //-----------------------------
+  function handleInput() {
+    if (keyIsDown(87)) { // W
+      player.y -= speed;
+    }
+    if (keyIsDown(83)) { // S
+      player.y += speed;
+    }
+    if (keyIsDown(65)) { // A
+      player.x -= speed;
+    }
+    if (keyIsDown(68)) { // D
+      player.x += speed;
+    }
+  }
+
+  function updateFollower() {
+    let desiredSpacing = 30;
+    let dir = p5.Vector.sub(player, follower.pos);
+    let distance = dir.mag();
+    if (distance > desiredSpacing) {
+      dir.setMag(follower.followSpeed);
+      follower.pos.add(dir);
+    }
+  }
+
+  function drawStroke(strokeObj) {
+    let c = color(strokeObj.color);
+    if (strokeObj.isTemporary) {
+      c.setAlpha(128);
+    } else {
+      c.setAlpha(255);
+    }
+    stroke(c);
+    strokeWeight(brushSize);
+    strokeCap(ROUND);
+    noFill();
+    beginShape();
+    for (let pt of strokeObj.points) {
+      vertex(pt.x, pt.y);
+    }
+    endShape();
+  }
+
+  function drawGrid() {
+    stroke(200);
+    strokeWeight(1);
+    let gridSize = 50;
+    let startX = player.x - width / (2 * zoom);
+    let endX   = player.x + width / (2 * zoom);
+    let startY = player.y - height / (2 * zoom);
+    let endY   = player.y + height / (2 * zoom);
+
+    for (let x = floor(startX / gridSize) * gridSize; x < endX; x += gridSize) {
+      line(x, startY, x, endY);
+    }
+    for (let y = floor(startY / gridSize) * gridSize; y < endY; y += gridSize) {
+      line(startX, y, endX, y);
+    }
+  }
+
+  function windowResized() {
+    resizeCanvas(windowWidth, windowHeight);
+    if (!menuIsFloating) {
+      setMenuAnchorBottomLeft();
+    }
+  }
+
+  function screenToWorld(sx, sy) {
+    let wx = (sx - width / 2) / zoom + player.x;
+    let wy = (sy - height / 2) / zoom + player.y;
+    return createVector(wx, wy);
+  }
+</script>
+</body>
+</html>
