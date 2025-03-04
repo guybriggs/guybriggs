@@ -1,0 +1,512 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>p5.js Floating Menu with Two-Phase (Color + Confirmation)</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.6.0/p5.min.js"></script>
+  <style>
+    body { margin: 0; overflow: hidden; }
+  </style>
+</head>
+<body>
+<script>
+  let player;
+  let zoom = 1;
+  let speed = 5;
+
+  // Follower
+  let follower = {
+    pos: null,
+    followSpeed: 3,
+    color: [255, 0, 0]
+  };
+
+  // Strokes
+  let strokes = [];         
+  let currentStroke = null; 
+
+  // If activeColor != null, the new stroke is solid. Otherwise, it’s temporary.
+  let activeColor = null;
+  let brushSize = 50;
+
+  // Menu settings
+  let colorPalette = [
+    "#e6194B", "#3cb44b", "#ffe119", "#4363d8", "#f58231",
+    "#911eb4", "#46f0f0", "#f032e6", "#bcf60c", "#fabebe"
+  ];
+
+  // Anchor + open/close states
+  let menuAnchor;               
+  let menuIsFloating = false;   
+  let menuIsOpen = false;       
+  let menuCurrentHeight = 0;    
+  let menuHeightMax = 300;      
+  let menuLerpSpeed = 0.1;
+
+  // Horizontal “two-phase” expansion
+  // Phase 0 -> only color squares (narrow)
+  // Phase 1 -> also shows big color preview, dummy text, and CREATE button
+  let menuPhase = 0;
+  let menuWidthPhase0 = 60;     // narrow
+  let menuWidthPhase1 = 250;    // expanded
+  let menuCurrentWidth = 0;
+  
+  // For the final “smooth close to bottom-left” logic
+  let closingToBottomLeft = false;
+
+  // Toggle button
+  let toggleButtonSize = 50;
+
+  // The color currently chosen in Phase 1, but not "CREATE"d yet
+  let pendingColor = null; 
+
+  // Flag to indicate the click was handled by the menu UI
+  let clickHandledByMenu = false;
+
+  function setup() {
+    createCanvas(windowWidth, windowHeight);
+    player = createVector(0, 0);
+    follower.pos = createVector(100, 100);
+
+    // Menu anchor defaults to bottom-left
+    setMenuAnchorBottomLeft();
+  }
+
+  function draw() {
+    background(220);
+
+    // Decide what our target height & width should be
+    let targetHeight = menuIsOpen ? menuHeightMax : 0;
+    let targetWidth = (menuPhase === 1) ? menuWidthPhase1 : menuWidthPhase0;
+
+    // Lerp to those targets
+    menuCurrentHeight = lerp(menuCurrentHeight, targetHeight, menuLerpSpeed);
+    menuCurrentWidth  = lerp(menuCurrentWidth,  targetWidth,  menuLerpSpeed);
+
+    // Clamp to 0 if basically closed
+    if (!menuIsOpen && menuCurrentHeight < 0.5) {
+      menuCurrentHeight = 0;
+      // If we were floating, fully close, then snap to bottom-left
+      if (closingToBottomLeft) {
+        setMenuAnchorBottomLeft();
+        closingToBottomLeft = false;
+      }
+    }
+
+    // Player movement
+    handleInput();
+
+    // ----- WORLD RENDERING -----
+    push();
+      translate(width / 2, height / 2);
+      scale(zoom);
+      translate(-player.x, -player.y);
+
+      drawGrid();
+      for (let s of strokes) {
+        drawStroke(s);
+      }
+      if (currentStroke) {
+        drawStroke(currentStroke);
+      }
+
+      // Player
+      fill(0, 0, 255);
+      noStroke();
+      ellipse(player.x, player.y, 20, 20);
+
+      // Follower
+      updateFollower();
+      fill(follower.color);
+      ellipse(follower.pos.x, follower.pos.y, 20, 20);
+    pop();
+
+    // ----- MENU & TOGGLE -----
+    drawMenu();
+    drawToggleButton();
+  }
+
+  //-----------------------------
+  // MENU LAYOUT
+  //-----------------------------
+  function drawMenu() {
+    if (menuCurrentHeight <= 0) return; // menu effectively hidden
+
+    // We'll treat (menuAnchor.x, menuAnchor.y) as the bottom-left corner.
+    // The menu extends upward by menuCurrentHeight, and right by menuCurrentWidth.
+    let x = menuAnchor.x;
+    let yTop = menuAnchor.y - menuCurrentHeight; // top edge
+    noStroke();
+    fill(50, 50, 50, 150);
+    rect(x, yTop, menuCurrentWidth, menuCurrentHeight);
+
+    // 1) Draw color squares along the left side (width=60)
+    drawColorSquares(x, yTop);
+
+    // 2) If Phase 1, show expanded region with big color swatch, dummy text, and CREATE
+    if (menuPhase === 1) {
+      drawConfirmationArea(x, yTop);
+    }
+  }
+
+  // The narrow color squares
+  function drawColorSquares(menuX, menuYTop) {
+    // The squares area is 60px wide, from (menuX..menuX+60)
+    // We'll place them from top to bottom inside menuCurrentHeight
+    // leaving some margin. We already have a 10px margin in each row.
+    for (let i = 0; i < colorPalette.length; i++) {
+      let swatchX = menuX + 10;
+      let swatchY = menuYTop + 10 + i * (40 + 10);
+      if (swatchY + 40 > menuYTop + menuCurrentHeight) break; // out of menu area
+
+      fill(colorPalette[i]);
+      rect(swatchX, swatchY, 40, 40);
+    }
+  }
+
+  // The expanded region to the right of the color squares
+  function drawConfirmationArea(menuX, menuYTop) {
+    // This area goes from x=menuX+60 to x=menuX+menuCurrentWidth
+    // The horizontal width is (menuCurrentWidth - 60), if fully expanded
+    let leftEdge = menuX + 60;
+    let regionWidth = menuCurrentWidth - 60;
+    let regionTop = menuYTop;
+    let regionHeight = menuCurrentHeight;
+
+    // Some margin
+    let pad = 10;
+    let contentX = leftEdge + pad;
+    let contentY = regionTop + pad;
+    let contentW = regionWidth - 2*pad;
+    let contentH = regionHeight - 2*pad;
+
+    // 1) Big color preview (square at the top)
+    // Let's make it 80px tall, for example
+    let previewH = 80;
+    fill(pendingColor || 200);
+    rect(contentX, contentY, contentW, previewH);
+
+    // 2) Dummy text below
+    let textY = contentY + previewH + 20; 
+    fill(255);
+    textSize(16);
+    textAlign(LEFT, TOP);
+    text("Some dummy text about this color.\nPick a different color if you like!\nWhen ready, press CREATE.", 
+         contentX, textY, contentW, 200);
+
+    // 3) CREATE button near the bottom
+    let buttonH = 40;
+    let buttonY = (regionTop + regionHeight) - pad - buttonH; 
+    fill(255);
+    rect(contentX, buttonY, contentW, buttonH);
+
+    fill(0);
+    textAlign(CENTER, CENTER);
+    textSize(18);
+    text("CREATE", contentX + contentW/2, buttonY + buttonH/2);
+  }
+
+  //-----------------------------
+  // HELPER: finalize color -> close menu
+  //-----------------------------
+  function finalizeColorSelection() {
+    // If there's a stroke in progress that is temporary, finalize it
+    if (currentStroke && currentStroke.isTemporary) {
+      currentStroke.color = pendingColor || '#000000';
+      currentStroke.isTemporary = false;
+      strokes.push(currentStroke);
+      currentStroke = null;
+      activeColor = null; // so next stroke is not forced unless user picks again
+    }
+    else {
+      // Otherwise, the user is pre-choosing for a future stroke
+      // We set that color as activeColor
+      activeColor = pendingColor || '#000000';
+    }
+
+    // Close + snap
+    pendingColor = null;
+    closeMenuSnapToBottomLeft();
+  }
+
+  // If we’re floating, we animate closed in place
+  // then snap to bottom-left only after fully closed.
+  function closeMenuSnapToBottomLeft() {
+    menuIsOpen = false;
+    menuPhase = 0; // reset to color squares only next time it opens
+    if (menuIsFloating) {
+      closingToBottomLeft = true;
+    }
+  }
+
+  //-----------------------------
+  // TOGGLE BUTTON
+  //-----------------------------
+  function drawToggleButton() {
+    noStroke();
+    fill(100);
+    rect(0, height - toggleButtonSize, toggleButtonSize, toggleButtonSize);
+
+    fill(255);
+    textAlign(CENTER, CENTER);
+    textSize(16);
+    text(menuIsOpen ? "▲" : "▼",
+         toggleButtonSize / 2,
+         height - toggleButtonSize / 2);
+  }
+
+  function clickedToggleButton(mx, my) {
+    return (mx >= 0 && mx <= toggleButtonSize &&
+            my >= height - toggleButtonSize && my <= height);
+  }
+
+  //-----------------------------
+  // MOUSE / CLICK LOGIC
+  //-----------------------------
+  function mousePressed() {
+    // 1) Check toggle button
+    if (clickedToggleButton(mouseX, mouseY)) {
+      // Always anchor bottom-left if toggling via button
+      setMenuAnchorBottomLeft();
+      closingToBottomLeft = false;
+      menuIsOpen = !menuIsOpen;
+      return;
+    }
+
+    // 2) If the menu is open, see if we clicked inside it
+    if (menuIsOpen) {
+      // If we are in the expanded area, see if we clicked the CREATE button
+      if (menuPhase === 1) {
+        let clickedCreate = checkCreateButton(mouseX, mouseY);
+        if (clickedCreate) {
+          clickHandledByMenu = true;
+          finalizeColorSelection();
+          return;
+        }
+      }
+      // Next, see if we clicked on a color swatch
+      let chosenColor = getColorFromMenu(mouseX, mouseY);
+      if (chosenColor) {
+        // We do not finalize right away – user must press CREATE to confirm.
+        // We simply store this in `pendingColor` and expand to Phase 1.
+        pendingColor = chosenColor;
+        menuPhase = 1;  // expand horizontally
+        clickHandledByMenu = true;
+        return;
+      }
+    }
+
+    // 3) Otherwise, we might start a stroke if there isn’t one
+    if (!currentStroke) {
+      let worldPos = screenToWorld(mouseX, mouseY);
+      if (activeColor) {
+        // We have a color => stroke is solid
+        currentStroke = {
+          color: activeColor,
+          points: [worldPos],
+          isTemporary: false
+        };
+      } else {
+        // No color => stroke is semi-transparent
+        currentStroke = {
+          color: '#000000',
+          points: [worldPos],
+          isTemporary: true
+        };
+      }
+    }
+  }
+
+  function mouseDragged() {
+    if (currentStroke) {
+      let newPos = screenToWorld(mouseX, mouseY);
+      let lastPoint = currentStroke.points[currentStroke.points.length - 1];
+      let d = dist(newPos.x, newPos.y, lastPoint.x, lastPoint.y);
+      let step = brushSize / 4;
+      if (d > step) {
+        let steps = ceil(d / step);
+        for (let i = 1; i <= steps; i++) {
+          let inter = p5.Vector.lerp(lastPoint, newPos, i / steps);
+          currentStroke.points.push(inter);
+        }
+      } else {
+        currentStroke.points.push(newPos);
+      }
+    }
+  }
+
+  function mouseReleased() {
+    // If the click was handled by the menu, do not reposition the menu anchor.
+    if (clickHandledByMenu) {
+      clickHandledByMenu = false;
+      return;
+    }
+    
+    if (!currentStroke) return;
+
+    // If it's a solid stroke, finalize immediately
+    if (!currentStroke.isTemporary) {
+      strokes.push(currentStroke);
+      currentStroke = null;
+      activeColor = null;
+      closeMenuSnapToBottomLeft();
+    }
+    // If temporary, open the floating menu at the mouse
+    else {
+      setMenuAnchorToMouse(mouseX, mouseY);
+      closingToBottomLeft = false;
+      menuIsOpen = true;
+      // We remain in Phase 0 (narrow) until user picks a color from squares
+    }
+  }
+
+  // Check if we clicked the "CREATE" button in the expanded region
+  function checkCreateButton(mx, my) {
+    if (menuPhase !== 1 || menuCurrentHeight <= 0 || menuCurrentWidth < 60) {
+      return false;
+    }
+
+    let x = menuAnchor.x;
+    let yTop = menuAnchor.y - menuCurrentHeight;
+    let leftEdge = x + 60;
+    let regionWidth = menuCurrentWidth - 60;
+
+    // We used a margin of 10, so let's replicate that logic:
+    let pad = 10;
+    let contentX = leftEdge + pad;
+    let contentY = yTop + pad;
+    let contentW = regionWidth - 2*pad;
+    let contentH = menuCurrentHeight - 2*pad;
+
+    // The CREATE button was 40px tall, placed at the bottom
+    let buttonH = 40;
+    let buttonY = (yTop + menuCurrentHeight) - pad - buttonH;
+    let buttonX = contentX;
+    let buttonW = contentW;
+
+    return (mx >= buttonX && mx <= buttonX + buttonW &&
+            my >= buttonY && my <= buttonY + buttonH);
+  }
+
+  // Extract color from the narrow squares (Phase 0 area)
+  function getColorFromMenu(mx, my) {
+    // The menu is from (menuAnchor.x, menuAnchor.y - menuCurrentHeight)
+    // to (menuAnchor.x + menuCurrentWidth, menuAnchor.y).
+    let x = menuAnchor.x;
+    let y = menuAnchor.y - menuCurrentHeight;
+    let w = menuCurrentWidth;
+    let h = menuCurrentHeight;
+
+    if (mx < x || mx > x + w) return null;
+    if (my < y || my > y + h) return null;
+
+    // Only check the left region (width=60)
+    let squaresRight = x + 60;
+    if (mx > squaresRight) {
+      return null; // clicked somewhere in the expanded region, not on squares
+    }
+
+    // Iterate squares
+    for (let i = 0; i < colorPalette.length; i++) {
+      let swatchX = x + 10;
+      let swatchY = y + 10 + i * (40 + 10);
+      if (swatchY + 40 > y + h) break;
+      if (mx >= swatchX && mx <= swatchX + 40 &&
+          my >= swatchY && my <= swatchY + 40) {
+        return colorPalette[i];
+      }
+    }
+    return null;
+  }
+
+  //-----------------------------
+  // MENU ANCHOR & MOVEMENT
+  //-----------------------------
+  function setMenuAnchorBottomLeft() {
+    menuAnchor = createVector(0, height - toggleButtonSize);
+    menuIsFloating = false;
+  }
+
+  function setMenuAnchorToMouse(mx, my) {
+    menuAnchor = createVector(mx, my);
+    menuIsFloating = true;
+  }
+
+  //-----------------------------
+  // PLAYER/FOLLOWER + UTILS
+  //-----------------------------
+  function handleInput() {
+    if (keyIsDown(87)) { // W
+      player.y -= speed;
+    }
+    if (keyIsDown(83)) { // S
+      player.y += speed;
+    }
+    if (keyIsDown(65)) { // A
+      player.x -= speed;
+    }
+    if (keyIsDown(68)) { // D
+      player.x += speed;
+    }
+  }
+
+  function updateFollower() {
+    let desiredSpacing = 30;
+    let dir = p5.Vector.sub(player, follower.pos);
+    let distance = dir.mag();
+    if (distance > desiredSpacing) {
+      dir.setMag(follower.followSpeed);
+      follower.pos.add(dir);
+    }
+  }
+
+  function drawStroke(strokeObj) {
+    let c = color(strokeObj.color);
+    if (strokeObj.isTemporary) {
+      c.setAlpha(128);
+    } else {
+      c.setAlpha(255);
+    }
+    stroke(c);
+    strokeWeight(brushSize);
+    strokeCap(ROUND);
+    noFill();
+    beginShape();
+    for (let pt of strokeObj.points) {
+      vertex(pt.x, pt.y);
+    }
+    endShape();
+  }
+
+  function drawGrid() {
+    stroke(200);
+    strokeWeight(1);
+    let gridSize = 50;
+    let startX = player.x - width / (2 * zoom);
+    let endX   = player.x + width / (2 * zoom);
+    let startY = player.y - height / (2 * zoom);
+    let endY   = player.y + height / (2 * zoom);
+
+    for (let x = floor(startX / gridSize) * gridSize; x < endX; x += gridSize) {
+      line(x, startY, x, endY);
+    }
+    for (let y = floor(startY / gridSize) * gridSize; y < endY; y += gridSize) {
+      line(startX, y, endX, y);
+    }
+  }
+
+  function windowResized() {
+    resizeCanvas(windowWidth, windowHeight);
+    if (!menuIsFloating) {
+      setMenuAnchorBottomLeft();
+    }
+  }
+
+  function screenToWorld(sx, sy) {
+    let wx = (sx - width / 2) / zoom + player.x;
+    let wy = (sy - height / 2) / zoom + player.y;
+    return createVector(wx, wy);
+  }
+</script>
+</body>
+</html>
