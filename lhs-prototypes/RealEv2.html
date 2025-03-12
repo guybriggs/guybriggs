@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>People Talking & Being Happy Simulation</title>
+    <!-- include Zdog library -->
+    <script src="https://unpkg.com/zdog@1.1.2/dist/zdog.dist.min.js"></script>
+    <style>
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+      }
+      canvas {
+        display: block;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas class="zdog-canvas" width="600" height="600"></canvas>
+    <script>
+      // Create the Zdog illustration and link it to our canvas.
+      let illo = new Zdog.Illustration({
+        element: ".zdog-canvas",
+        dragRotate: true,
+        resize: true,
+        rotate: { x: -Math.PI/4 },
+      });
+
+      // ----- GLOBAL SIMULATION & PHYSICS PARAMETERS -----
+      const gravity = 0.5;          // Gravity acceleration
+      const bounceDamping = 0.6;    // Energy loss on bounce
+      const maxBounces = 2;         // Remove particle after this many bounces
+      const groundY = 0;            // Ground level (y = 0)
+      const collisionDelay = 500;   // ms delay for agent collision particle spawn
+      const bounds = { x: 300, z: 300 }; // Movement bounds (half-width/height)
+
+      // Container for happiness particles.
+      let happinessParticles = [];
+
+      // We'll store the last spawn time for any pair of agents.
+      let collisionCooldowns = {};
+
+      // ----- PLAYER SETUP -----
+      // The player is represented as a circle; you can move it with WASD.
+      let player = {
+        shape: new Zdog.Shape({
+          addTo: illo,
+          translate: { x: 0, y: groundY, z: 0 },
+          stroke: 10,
+          color: "#333",
+        }),
+        position: { x: 0, y: groundY, z: 0 },
+        speed: 4,
+      };
+
+      // ----- AGENTS SETUP -----
+      // Create 10 agents. Two (indices 0 and 1) will be stationary and placed close together.
+      let agents = [];
+      const numAgents = 10;
+      for (let i = 0; i < numAgents; i++) {
+        let isStationary = (i === 0 || i === 1);
+        let pos;
+        if (isStationary) {
+          // Place the two stationary agents near one another.
+          pos = { x: -50 + i * 20, y: groundY, z: -50 + i * 20 };
+        } else {
+          // Random starting position within bounds.
+          pos = {
+            x: Math.random() * bounds.x * 2 - bounds.x,
+            y: groundY,
+            z: Math.random() * bounds.z * 2 - bounds.z,
+          };
+        }
+        // Each agent is a circle.
+        let agentShape = new Zdog.Shape({
+          addTo: illo,
+          translate: { x: pos.x, y: pos.y, z: pos.z },
+          stroke: 10,
+          color: "#666",
+        });
+        // For moving agents, assign a random velocity.
+        let velocity = { x: 0, y: 0, z: 0 };
+        if (!isStationary) {
+          velocity = {
+            x: (Math.random() - 0.5) * 2,
+            y: 0,
+            z: (Math.random() - 0.5) * 2,
+          };
+        }
+        agents.push({
+          shape: agentShape,
+          position: pos,
+          velocity: velocity,
+          isStationary: isStationary,
+        });
+      }
+
+      // ----- PLAYER MOVEMENT (WASD) -----
+      let keys = {};
+      window.addEventListener("keydown", function(e) {
+        keys[e.key.toLowerCase()] = true;
+      });
+      window.addEventListener("keyup", function(e) {
+        keys[e.key.toLowerCase()] = false;
+      });
+
+      // ----- HAPPINESS PARTICLE SPAWNING -----
+      // Modified function: now it can spawn either a yellow orb ("orb") or a red cross ("cross")
+      function spawnHappinessParticle(position, type = "orb") {
+        let particleShape;
+        if (type === "orb") {
+          // Spawn a yellow orb.
+          particleShape = new Zdog.Shape({
+            addTo: illo,
+            translate: { x: position.x, y: position.y, z: position.z },
+            stroke: 12,   // 3x as big as our water drop (4)
+            color: "#FF0", // yellow color for happiness
+          });
+        } else if (type === "cross") {
+          // Spawn a red cross by creating a group of two crossing lines.
+          let group = new Zdog.Group({
+            addTo: illo,
+            translate: { x: position.x, y: position.y, z: position.z },
+          });
+          new Zdog.Shape({
+            addTo: group,
+            path: [ { x: -6 }, { x: 6 } ],
+            stroke: 4,
+            color: '#F00',
+          });
+          new Zdog.Shape({
+            addTo: group,
+            path: [ { y: -6 }, { y: 6 } ],
+            stroke: 4,
+            color: '#F00',
+          });
+          particleShape = group;
+        }
+
+        // Random horizontal velocity.
+        const horizontalSpeed = Math.random() * 2 + 1;
+        const angle = Math.random() * Math.PI * 2;
+        const vx = horizontalSpeed * Math.cos(angle);
+        const vz = horizontalSpeed * Math.sin(angle);
+        // Upward burst (remember: in our coordinate system, up is negative y).
+        const vy = - (Math.random() * 3 + 3);
+
+        happinessParticles.push({
+          shape: particleShape,
+          velocity: { x: vx, y: vy, z: vz },
+          bounceCount: 0,
+          type: type,
+        });
+      }
+
+      // ----- UPDATE SIMULATION -----
+      function updateSimulation() {
+        // ----- Update Player Movement -----
+        if (keys["w"]) { player.position.z -= player.speed; }
+        if (keys["s"]) { player.position.z += player.speed; }
+        if (keys["a"]) { player.position.x -= player.speed; }
+        if (keys["d"]) { player.position.x += player.speed; }
+        player.shape.translate.x = player.position.x;
+        player.shape.translate.z = player.position.z;
+
+        // ----- Update Agents Movement -----
+        for (let agent of agents) {
+          if (!agent.isStationary) {
+            // Move agent based on its velocity.
+            agent.position.x += agent.velocity.x;
+            agent.position.z += agent.velocity.z;
+            // Bounce off the simulation boundaries.
+            if (agent.position.x < -bounds.x || agent.position.x > bounds.x) {
+              agent.velocity.x *= -1;
+            }
+            if (agent.position.z < -bounds.z || agent.position.z > bounds.z) {
+              agent.velocity.z *= -1;
+            }
+            // Update the agent's position.
+            agent.shape.translate.x = agent.position.x;
+            agent.shape.translate.z = agent.position.z;
+          }
+        }
+
+        // ----- Check Agent Collisions to Spawn Happiness Particles -----
+        let now = Date.now();
+        for (let i = 0; i < agents.length; i++) {
+          for (let j = i + 1; j < agents.length; j++) {
+            let a = agents[i];
+            let b = agents[j];
+            let dx = a.position.x - b.position.x;
+            let dz = a.position.z - b.position.z;
+            let distance = Math.sqrt(dx*dx + dz*dz);
+            let threshold = 30; // when agents are "close enough" to talk
+            if (distance < threshold) {
+              let key = i + "_" + j;
+              // Throttle spawns so that a particle is generated only once every collisionDelay ms.
+              if (!collisionCooldowns[key] || now - collisionCooldowns[key] > collisionDelay) {
+                // Spawn a particle at the midpoint between the two agents.
+                let mid = {
+                  x: (a.position.x + b.position.x) / 2,
+                  // Spawn slightly above the ground so the burst is visible.
+                  y: groundY - 20,
+                  z: (a.position.z + b.position.z) / 2,
+                };
+                // Randomly decide whether to spawn an orb or a red cross.
+                let type = Math.random() < 0.3 ? "cross" : "orb";
+                spawnHappinessParticle(mid, type);
+                collisionCooldowns[key] = now;
+              }
+            }
+          }
+        }
+
+        // ----- Update Happiness Particles Physics & Check for Absorption by Player -----
+        for (let i = happinessParticles.length - 1; i >= 0; i--) {
+          let particle = happinessParticles[i];
+          // Apply gravity.
+          particle.velocity.y += gravity;
+          // Update the particle's position.
+          particle.shape.translate.x += particle.velocity.x;
+          particle.shape.translate.y += particle.velocity.y;
+          particle.shape.translate.z += particle.velocity.z;
+
+          // Bounce when hitting the ground.
+          if (particle.shape.translate.y > groundY) {
+            particle.shape.translate.y = groundY;
+            particle.velocity.y *= -bounceDamping;
+            particle.bounceCount++;
+            // Remove the particle after it has bounced a few times.
+            if (particle.bounceCount >= maxBounces) {
+              illo.remove(particle.shape);
+              happinessParticles.splice(i, 1);
+              continue;
+            }
+          }
+          
+          // ----- Player Absorption Check -----
+          // Calculate 2D (x,z) distance between the player and the particle.
+          let pdx = particle.shape.translate.x - player.position.x;
+          let pdz = particle.shape.translate.z - player.position.z;
+          let pDistance = Math.sqrt(pdx * pdx + pdz * pdz);
+          const absorbDistance = 20; // Threshold for absorption
+          if (pDistance < absorbDistance) {
+            // Remove the particle as it is absorbed by the player.
+            illo.remove(particle.shape);
+            happinessParticles.splice(i, 1);
+          }
+        }
+      }
+
+      // ----- ANIMATION LOOP -----
+      function animate() {
+        requestAnimationFrame(animate);
+        updateSimulation();
+        illo.updateRenderGraph();
+      }
+      animate();
+    </script>
+  </body>
+</html>
