@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>AUI Prototype - Enhanced Objectives & Rewards</title>
+  <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+  <style>
+    /* Reset and full-screen game background */
+    body, html {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+    }
+    .game-screen {
+      background-color: green;
+      height: 100%;
+      position: relative;
+      font-family: Arial, sans-serif;
+    }
+    /* Top-right container for toggle buttons */
+    .top-buttons {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      z-index: 100;
+    }
+    .top-buttons button {
+      padding: 5px 10px;
+      cursor: pointer;
+      background: grey;
+      border: none;
+      color: #fff;
+      margin-left: 5px;
+    }
+    /* Modal overlay: absolutely positioned with 5%/10% padding */
+    #modal-overlay {
+      position: absolute;
+      top: 5%;
+      bottom: 5%;
+      left: 10%;
+      right: 10%;
+      background: rgba(0, 0, 0, 0.85);
+      color: #fff;
+      padding: 10px;
+      display: none;
+      z-index: 99;
+      box-sizing: border-box;
+      display: flex;
+      flex-direction: column;
+    }
+    /* Container for the list that scrolls */
+    #modal-list-container {
+      flex: 1;
+      overflow-y: auto;
+    }
+    /* List styling */
+    #modal-list {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+    }
+    /* Objectives list items */
+    .item-objective {
+      padding: 5px;
+      margin-bottom: 5px;
+      cursor: pointer;
+      background: transparent;
+      position: relative;
+      border-bottom: 1px solid #444;
+    }
+    /* Small color box to indicate the category (objectives & detail view) */
+    .color-box {
+      width: 20px;
+      height: 20px;
+      display: inline-block;
+      float: right;
+      margin-left: 10px;
+    }
+    /* Progress bar for objectives in list items */
+    .objective-progress-container {
+      background: #ddd;
+      height: 10px;
+      margin-top: 5px;
+    }
+    .objective-progress {
+      background-color: blue;
+      height: 100%;
+      width: 0;
+    }
+    /* Rewards list items */
+    .item-reward {
+      width: 80px;
+      height: 80px;
+      margin: 5px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border: 1px solid #fff;
+    }
+    /* Simple break between reward categories (no physical line) */
+    .reward-break {
+      margin: 10px 0;
+      width: 100%;
+      height: 0;
+    }
+    /* Detail view clamped to bottom */
+    .detail-view {
+      background: rgba(255,255,255,0.9);
+      color: #000;
+      padding: 10px;
+      box-sizing: border-box;
+    }
+    /* (The detail progress bar is no longer used for objectives) */
+    #detail-progress-container {
+      background: #ddd;
+      height: 20px;
+      margin-top: 5px;
+    }
+    #detail-progress {
+      background-color: blue;
+      height: 100%;
+      width: 0;
+    }
+  </style>
+</head>
+<body>
+  <div class="game-screen">
+    <div class="top-buttons">
+      <!-- When modal is closed, only this button is visible.
+           When open, its label becomes "Close" and a switch button appears. -->
+      <button id="top-toggle-btn">Objectives</button>
+      <button id="switch-btn" style="display:none;"></button>
+    </div>
+
+    <!-- Modal Overlay -->
+    <div id="modal-overlay">
+      <div id="modal-list-container">
+        <ul id="modal-list"></ul>
+      </div>
+      <!-- Detail View is clamped to the bottom -->
+      <div class="detail-view" id="modal-detail-view" style="display:none;">
+        <h3 id="detail-title">Title</h3>
+        <p id="detail-description">Description</p>
+        <!-- For objectives, a small colored box with points will be added here -->
+      </div>
+    </div>
+  </div>
+
+  <script>
+    $(document).ready(function(){
+      // Data arrays for objectives and rewards
+      var objectives = [];
+      var rewards = [];
+      var categories = ["purple", "green", "blue", "yellow", "orange"];
+
+      // Generate dummy objectives
+      // Each objective gets a random progress percentage and random points
+      for (var i = 1; i <= 10; i++){
+        var cat = categories[Math.floor(Math.random() * categories.length)];
+        objectives.push({
+          id: i,
+          title: "Objective " + i,
+          description: "Description for objective " + i,
+          category: cat,
+          progress: Math.floor(Math.random() * 101),
+          points: Math.floor(Math.random() * 10) + 1  // random points between 1 and 10
+        });
+      }
+      // Sort objectives by percentage complete (descending)
+      objectives.sort(function(a, b) {
+        return b.progress - a.progress;
+      });
+
+      // Generate dummy rewards (10 rewards now)
+      for (var j = 1; j <= 10; j++){
+        var cat = categories[Math.floor(Math.random() * categories.length)];
+        rewards.push({
+          id: j,
+          title: "Reward " + j,
+          description: "Description for reward " + j,
+          category: cat
+        });
+      }
+      // Sort rewards by category alphabetically
+      rewards.sort(function(a, b) {
+        return a.category.localeCompare(b.category);
+      });
+
+      var currentMode = "objectives"; // or "rewards"
+      var modalOpen = false;
+
+      // Render list content based on current mode.
+      function renderContent(){
+        var list = $("#modal-list");
+        list.empty();
+        if (currentMode === "objectives"){
+          $.each(objectives, function(i, item){
+            var li = $("<li class='item-objective'></li>").attr("data-id", item.id);
+            li.append($("<div class='objective-title'></div>").text(item.title));
+            // Add progress bar inside list item
+            var progressContainer = $("<div class='objective-progress-container'></div>");
+            var progressBar = $("<div class='objective-progress'></div>").css("width", item.progress + "%");
+            progressContainer.append(progressBar);
+            li.append(progressContainer);
+            // Add a small color box (floated right) to indicate category color
+            var colorBox = $("<div class='color-box'></div>").css("background-color", item.category);
+            li.append(colorBox);
+            list.append(li);
+          });
+        } else {
+          // For rewards, insert a break (<br>) when category changes
+          var lastCategory = "";
+          $.each(rewards, function(i, item){
+            if(item.category !== lastCategory){
+              if(lastCategory !== ""){
+                list.append("<br class='reward-break'>");
+              }
+              lastCategory = item.category;
+            }
+            var li = $("<li class='item-reward'></li>")
+              .attr("data-id", item.id)
+              .text(item.title);
+            list.append(li);
+          });
+        }
+      }
+
+      // Update detail view when an item is clicked.
+      function updateDetail(item){
+        $("#detail-title").text(item.title);
+        $("#detail-description").text(item.description);
+        // Remove any existing detail color box
+        $("#detail-points").remove();
+        if(currentMode === "objectives"){
+          // For objectives, add a small colored box with points in the detail view.
+          var pointsBox = $("<div id='detail-points' class='color-box'></div>")
+            .css({
+              "background-color": item.category,
+              "float": "right",
+              "margin-left": "10px",
+              "color": "#fff",
+              "text-align": "center",
+              "line-height": "20px",
+              "width": "20px",
+              "height": "20px"
+            })
+            .text(item.points + " pts");
+          $("#modal-detail-view").prepend(pointsBox);
+          // Hide the detail progress bar (we no longer need it)
+          $("#detail-progress-container").hide();
+        } else {
+          $("#detail-progress-container").hide();
+        }
+        $("#modal-detail-view").show();
+      }
+
+      // Update the top-right buttons based on modal state and current mode.
+      function updateTopButtons(){
+        if(modalOpen){
+          $("#top-toggle-btn").text("Close");
+          $("#switch-btn").show().text(currentMode === "objectives" ? "Rewards" : "Objectives");
+        } else {
+          $("#top-toggle-btn").text(currentMode === "objectives" ? "Objectives" : "Rewards");
+          $("#switch-btn").hide();
+        }
+      }
+
+      // Open modal and auto-select the first item.
+      function openModal(){
+        modalOpen = true;
+        $("#modal-overlay").show();
+        updateTopButtons();
+        renderContent();
+        var firstItem = $("#modal-list li").first();
+        if(firstItem.length){
+          firstItem.trigger("click");
+        } else {
+          $("#modal-detail-view").hide();
+        }
+      }
+
+      // Close modal.
+      function closeModal(){
+        modalOpen = false;
+        $("#modal-overlay").hide();
+        updateTopButtons();
+      }
+
+      // Top toggle button click handler.
+      $("#top-toggle-btn").click(function(){
+        if(modalOpen){
+          closeModal();
+        } else {
+          openModal();
+        }
+      });
+
+      // Switch button click handler: change the current mode.
+      $("#switch-btn").click(function(){
+        currentMode = currentMode === "objectives" ? "rewards" : "objectives";
+        updateTopButtons();
+        renderContent();
+        var firstItem = $("#modal-list li").first();
+        if(firstItem.length){
+          firstItem.trigger("click");
+        } else {
+          $("#modal-detail-view").hide();
+        }
+      });
+
+      // When an item in the list is clicked, update the detail view.
+      $(document).on("click", "#modal-list li", function(){
+        var id = $(this).data("id");
+        var item;
+        if(currentMode === "objectives"){
+          item = objectives.find(function(o){ return o.id == id; });
+        } else {
+          item = rewards.find(function(r){ return r.id == id; });
+        }
+        if(item){
+          updateDetail(item);
+        }
+      });
+    });
+  </script>
+</body>
+</html>
