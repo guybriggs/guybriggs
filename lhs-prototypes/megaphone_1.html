@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>3D Game Prototype</title>
+  <style>
+    body { margin: 0; overflow: hidden; }
+    canvas { display: block; }
+  </style>
+</head>
+<body>
+
+<!-- Import Three.js and OrbitControls and Font/Text loaders -->
+<script src="https://cdn.jsdelivr.net/npm/three@0.146.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.146.0/examples/js/controls/OrbitControls.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.146.0/examples/js/loaders/FontLoader.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.146.0/examples/js/geometries/TextGeometry.js"></script>
+
+<script>
+// === SETUP SCENE ===
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0xeaffd0);
+
+const camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
+camera.position.set(10, 10, 10);
+camera.lookAt(0, 0, 0);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+document.body.appendChild(renderer.domElement);
+
+// Lights
+scene.add(new THREE.AmbientLight(0xffffff, 0.7));
+const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+dirLight.position.set(10, 20, 10);
+scene.add(dirLight);
+
+// Ground
+const ground = new THREE.Mesh(
+  new THREE.PlaneGeometry(50, 50),
+  new THREE.MeshLambertMaterial({ color: 0xeaffd0 })
+);
+ground.rotation.x = -Math.PI / 2;
+scene.add(ground);
+
+// === AGENTS ===
+const agents = [];
+const agentGroup = new THREE.Group();
+scene.add(agentGroup);
+
+function createAgent(x, z) {
+  const group = new THREE.Group();
+  
+  // Wider Body (fatter cone)
+  const body = new THREE.Mesh(
+    new THREE.ConeGeometry(0.7, 2.2, 32), // <--- wider bottom
+    new THREE.MeshLambertMaterial({ color: 0x0077ff })
+  );
+  body.position.y = 0.5;
+  group.add(body);
+  
+  // Head (lowered a bit to sit nicely)
+  const head = new THREE.Mesh(
+    new THREE.SphereGeometry(0.4, 24, 24), // <--- slightly bigger head
+    new THREE.MeshLambertMaterial({ color: 0xff7700 })
+  );
+  head.position.y = 1.2; // lower than before
+  group.add(head);
+
+  group.position.set(x, 0, z);
+  agentGroup.add(group);
+  agents.push(group);
+}
+
+for (let i = 0; i < 11; i++) {
+  const x = (Math.random() - 0.5) * 30;
+  const z = (Math.random() - 0.5) * 30;
+  createAgent(x, z);
+}
+
+// === PLAYER ===
+const player = new THREE.Group();
+scene.add(player);
+
+const playerBody = new THREE.Mesh(
+  new THREE.ConeGeometry(0.5, 1, 16),
+  new THREE.MeshLambertMaterial({ color: 0x00ff00 })
+);
+playerBody.position.y = 0.5;
+player.add(playerBody);
+
+const playerHead = new THREE.Mesh(
+  new THREE.SphereGeometry(0.3, 16, 16),
+  new THREE.MeshLambertMaterial({ color: 0xffff00 })
+);
+playerHead.position.y = 1.3;
+player.add(playerHead);
+
+// Megaphone
+const megaphone = new THREE.Mesh(
+  new THREE.CylinderGeometry(0.1, 0.3, 0.8, 12),
+  new THREE.MeshLambertMaterial({ color: 0xaaaaaa })
+);
+megaphone.rotation.z = Math.PI / 2;
+megaphone.position.set(0.7, 1, 0);
+player.add(megaphone);
+
+player.position.set(0, 0, 0);
+
+// === CONTROLS ===
+const keys = {};
+document.addEventListener('keydown', (e) => { keys[e.key.toLowerCase()] = true; });
+document.addEventListener('keyup', (e) => { keys[e.key.toLowerCase()] = false; });
+
+const controls = new THREE.OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.enablePan = false;
+controls.enableZoom = false;  
+controls.screenSpacePanning = false;
+
+// Only rotate left/right
+controls.minPolarAngle = Math.PI / 4;   // 45 degrees down
+controls.maxPolarAngle = Math.PI / 4;   // 45 degrees down
+
+controls.rotateSpeed = 0.8;
+
+const fixedDistance = 20; // Slightly longer since we're higher up
+const fixedHeight = 15;   // How high above the player
+
+// === TEXT PROJECTILES ===
+const projectiles = [];
+
+// Font loader
+const loader = new THREE.FontLoader();
+loader.load('https://threejs.org/examples/fonts/helvetiker_regular.typeface.json', (font) => {
+  
+  function createTextProjectile(targetAgent) {
+    const textGeo = new THREE.TextGeometry('HOW R U?', {
+      font: font,
+      size: 0.3,
+      height: 0.05
+    });
+    const textMat = new THREE.MeshLambertMaterial({ color: 0xff0000 });
+    const textMesh = new THREE.Mesh(textGeo, textMat);
+
+    textMesh.position.copy(player.position);
+    textMesh.position.y += 1.5; // start above player
+
+    scene.add(textMesh);
+
+    // === Setup ballistic launch ===
+    const start = player.position.clone();
+    const target = targetAgent.position.clone();
+
+    const dir = target.clone().sub(start);
+    dir.y = 0;
+    dir.normalize();
+
+    const launchVelocity = dir.multiplyScalar(0.1); // horizontal speed
+    launchVelocity.y = 0.2; // upward throw
+
+    projectiles.push({
+      mesh: textMesh,
+      target: targetAgent,
+      state: 'arc',
+      velocity: launchVelocity
+    });
+  }
+
+  // === RAYCASTING ===
+  const raycaster = new THREE.Raycaster();
+  const mouse = new THREE.Vector2();
+
+  window.addEventListener('click', (event) => {
+    mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+    mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+
+    raycaster.setFromCamera(mouse, camera);
+
+    const intersects = raycaster.intersectObjects(agentGroup.children, true);
+    if (intersects.length > 0) {
+      const agent = intersects[0].object.parent;
+      createTextProjectile(agent);
+    }
+  });
+
+});
+
+// === GAME LOOP ===
+function animate() {
+  requestAnimationFrame(animate);
+
+  // WASD movement relative to camera
+  const moveSpeed = 0.1;
+  const moveDir = new THREE.Vector3();
+  if (keys['w']) moveDir.z += 1;
+  if (keys['s']) moveDir.z -= 1;
+  if (keys['a']) moveDir.x += 1;
+  if (keys['d']) moveDir.x -= 1;
+
+  if (moveDir.lengthSq() > 0) {
+    moveDir.normalize();
+    
+    // Rotate movement by camera
+    const cameraDir = new THREE.Vector3();
+    camera.getWorldDirection(cameraDir);
+    cameraDir.y = 0;
+    cameraDir.normalize();
+    
+    const cameraRight = new THREE.Vector3();
+    cameraRight.crossVectors(new THREE.Vector3(0, 1, 0), cameraDir).normalize();
+
+    const moveVector = new THREE.Vector3();
+    moveVector.addScaledVector(cameraRight, moveDir.x);
+    moveVector.addScaledVector(cameraDir, moveDir.z);
+    moveVector.normalize();
+
+    player.position.add(moveVector.multiplyScalar(moveSpeed));
+
+    // Smoothly rotate player
+    const targetAngle = Math.atan2(moveVector.x, moveVector.z);
+    const currentAngle = player.rotation.y + Math.PI/2;
+    let angleDiff = targetAngle - currentAngle;
+    angleDiff = Math.atan2(Math.sin(angleDiff), Math.cos(angleDiff)); // keep within [-PI, PI]
+    player.rotation.y += angleDiff * 0.2; // smooth turn
+  }
+
+// Make camera rotate around player at fixed distance
+const offset = new THREE.Vector3();
+offset.copy(camera.position).sub(controls.target).normalize().multiplyScalar(fixedDistance);
+camera.position.copy(player.position).add(offset);
+
+// Always look at player
+controls.target.copy(player.position);
+
+  // Update projectiles
+  projectiles.forEach((proj, index) => {
+    if (proj.state === 'arc') {
+      // Ballistic motion with gravity
+      proj.mesh.position.add(proj.velocity);
+      proj.velocity.y -= 0.01; // Gravity pull down
+      
+      if (proj.mesh.position.y <= 0.5) {
+        // Landed on ground
+        proj.mesh.position.y = 0.5;
+        proj.state = 'slide';
+
+        // Flatten out velocity (no vertical component)
+        proj.velocity.y = 0;
+
+        // Normalize horizontal direction and set sliding speed
+        const targetPos = proj.target.position.clone();
+        targetPos.y = 0.5;
+        const dir = targetPos.sub(proj.mesh.position).normalize();
+        proj.velocity = dir.multiplyScalar(0.2); // Sliding speed
+      }
+    } 
+    else if (proj.state === 'slide') {
+      proj.mesh.position.add(proj.velocity);
+
+      proj.mesh.position.y = 0.5; // stay on ground while sliding
+
+      // Check distance to target horizontally
+      const projPos = proj.mesh.position.clone();
+      projPos.y = 0;
+      const targetPos = proj.target.position.clone();
+      targetPos.y = 0;
+      
+      const dist = projPos.distanceTo(targetPos);
+      if (dist < 1.0) {
+        scene.remove(proj.mesh);
+        projectiles.splice(index, 1);
+        createPopup(proj.target);
+      }
+    }
+  });
+  function createPopup(agent) {
+  const popupGroup = new THREE.Group();
+  scene.add(popupGroup);
+
+  const popupTexts = ["Unemployed", "Steven Pico", "Very Happy", "Low Funds"];
+  const popupObjects = [];
+
+  const loader = new THREE.FontLoader();
+  loader.load('https://threejs.org/examples/fonts/helvetiker_regular.typeface.json', (font) => {
+
+    popupTexts.forEach((text, index) => {
+      const textGeo = new THREE.TextGeometry(text, {
+        font: font,
+        size: 0.25,
+        height: 0.02,
+      });
+      const textMat = new THREE.MeshLambertMaterial({ color: 0x000000 }); // Black text
+      const textMesh = new THREE.Mesh(textGeo, textMat);
+
+      textMesh.position.set(-text.length * 0.065, index * 0.6, 0.01); // Center text
+
+      // Pale orange background
+      const bgMat = new THREE.MeshLambertMaterial({ color: 0xffe0b3 }); 
+      const bg = new THREE.Mesh(
+        new THREE.PlaneGeometry(3, 0.4),
+        bgMat
+      );
+      bg.position.set(0, index * 0.6, 0);
+
+      const container = new THREE.Group();
+      container.add(bg);
+      container.add(textMesh);
+      container.visible = false; // Start hidden
+      popupGroup.add(container);
+      popupObjects.push(container);
+    });
+
+    // Animate one-by-one
+    let currentIndex = 0;
+    const interval = setInterval(() => {
+      if (currentIndex < popupObjects.length) {
+        popupObjects[currentIndex].visible = true;
+        currentIndex++;
+      } else {
+        clearInterval(interval);
+
+        // After all appear, wait 3 seconds and remove
+        setTimeout(() => {
+          scene.remove(popupGroup);
+        }, 3000);
+      }
+    }, 200); // Faster: 200ms between each
+  });
+
+  // Attach popup above agent
+  popupGroup.position.set(agent.position.x, agent.position.y + 2.5, agent.position.z);
+
+  // Optional: keep it floating with agent if needed
+  agent.userData.popup = popupGroup;
+}
+
+
+  controls.update();
+  renderer.render(scene, camera);
+}
+
+animate();
+
+// Handle window resize
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+</script>
+
+</body>
+</html>
