@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>3D Planet Walk Prototype</title>
+  <style>
+    body { margin: 0; overflow: hidden; }
+    canvas { display: block; }
+  </style>
+</head>
+<body>
+<script src="https://cdn.jsdelivr.net/npm/three@0.136.0/build/three.min.js"></script>
+<script>
+  // ===== SETUP =====
+  if (typeof THREE === 'undefined') console.error('Three.js failed to load');
+
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x87CEEB);
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  document.body.appendChild(renderer.domElement);
+
+  const fov = 75;
+  const aspect = window.innerWidth / window.innerHeight;
+  const near = 0.1;
+  const far = 1000;
+  const camera = new THREE.PerspectiveCamera(fov, aspect, near, far);
+
+  scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+  const dirLight = new THREE.DirectionalLight(0xffffff, 1);
+  dirLight.position.set(5, 10, 7.5);
+  scene.add(dirLight);
+
+  // Constants
+  const planetRadius = 50;
+  const charRadius = planetRadius * 0.01;
+  const agentRadius = charRadius * 0.2;
+  const agentHeight = agentRadius * 4;
+  const moveSpeed = 0.005;
+  let cameraDistance = charRadius * 10;
+  const initialCameraDistance = charRadius * 10;
+  const minCameraDistance = charRadius * 2;
+  const maxCameraDistance = planetRadius * 2;
+  const cameraAngle = THREE.MathUtils.degToRad(30);
+  const upVec = new THREE.Vector3(0, 1, 0);
+
+  // Shift zoom & speed-up variables
+  let speedMultiplier = 1;
+  const maxSpeedMultiplier = 20;
+  const speedAccel = 0.1;
+  let zoomHold = 0;
+  const zoomHoldAccel = 0.005;
+  const baseZoomSpeed = 0.2;
+
+  // Burst settings
+  let lastBurstTime = performance.now();
+  const burstInterval = 3000; // milliseconds between bursts
+  const burstAmount = 1;     // base value per burst
+
+  // Planet hemispheres
+  const blackMat = new THREE.MeshStandardMaterial({ color: 0x000000 });
+  const blueMat = new THREE.MeshStandardMaterial({ color: 0x0000ff });
+  const hemiBlack = new THREE.Mesh(new THREE.SphereGeometry(planetRadius, 64, 64, 0, Math.PI), blackMat);
+  const hemiBlue = new THREE.Mesh(new THREE.SphereGeometry(planetRadius, 64, 64, Math.PI, Math.PI), blueMat);
+  const planet = new THREE.Group();
+  planet.add(hemiBlack, hemiBlue);
+  scene.add(planet);
+
+  // Player
+  const playerMat = new THREE.MeshStandardMaterial({ color: 0xff0000 });
+  const playerGroup = new THREE.Group();
+  const playerCone = new THREE.Mesh(new THREE.ConeGeometry(agentRadius, agentHeight, 8), playerMat);
+  const playerHead = new THREE.Mesh(new THREE.SphereGeometry(agentRadius, 16, 16), playerMat);
+  playerHead.position.set(0, agentHeight + agentRadius, 0);
+  playerGroup.add(playerCone, playerHead);
+  scene.add(playerGroup);
+
+  // Agents with pillars
+  const numAgents = 100;
+  const agents = [];
+  const maxOffset = 0.5;
+  const pillarGeom = new THREE.CylinderGeometry(agentRadius * 2, agentRadius * 2, 1, 8);
+  const pillarMat = new THREE.MeshStandardMaterial({ color: 0xffff00 });
+
+  for (let i = 0; i < numAgents; i++) {
+    const mat = new THREE.MeshStandardMaterial({ color: 0x00ff00 });
+    const body = new THREE.Mesh(new THREE.ConeGeometry(agentRadius, agentHeight, 8), mat);
+    const head = new THREE.Mesh(new THREE.SphereGeometry(agentRadius, 16, 16), mat);
+    const group = new THREE.Group();
+    head.position.set(0, agentHeight + agentRadius, 0);
+    group.add(body, head);
+
+    const pillar = new THREE.Mesh(pillarGeom, pillarMat);
+    pillar.visible = false;
+    group.add(pillar);
+
+    const theta0 = Math.acos(2 * Math.random() - 1);
+    const phi0 = Math.random() * 2 * Math.PI;
+    const targetTheta = THREE.MathUtils.clamp(theta0 + (Math.random() - 0.5) * maxOffset, 0.01, Math.PI - 0.01);
+    const targetPhi = phi0 + (Math.random() - 0.5) * maxOffset;
+
+    agents.push({
+      group,
+      theta: theta0,
+      phi: phi0,
+      targetTheta,
+      targetPhi,
+      speed: moveSpeed,
+      pillar,
+      value: 0,
+      multiplier: Math.pow(Math.random(), 2) * 2
+    });
+
+    scene.add(group);
+  }
+
+  // Player spherical coords
+  let theta = 0.01;
+  let phi = 0;
+
+  function updateEntityPosition(entity, theta, phi) {
+    const normal = new THREE.Vector3(
+      Math.sin(theta) * Math.cos(phi),
+      Math.cos(theta),
+      Math.sin(theta) * Math.sin(phi)
+    );
+    const r = planetRadius + agentHeight / 2;
+    entity.position.copy(normal.clone().multiplyScalar(r));
+    entity.quaternion.setFromUnitVectors(upVec, normal);
+  }
+
+  function updateCamera() {
+    const offset = new THREE.Vector3(
+      0,
+      cameraDistance * Math.sin(cameraAngle),
+      cameraDistance * Math.cos(cameraAngle)
+    ).applyAxisAngle(upVec, phi);
+    camera.position.copy(playerGroup.position.clone().add(offset));
+    camera.lookAt(playerGroup.position);
+  }
+
+  // Controls
+  const keys = {};
+  window.addEventListener('keydown', e => keys[e.key.toLowerCase()] = true);
+  window.addEventListener('keyup',   e => keys[e.key.toLowerCase()] = false);
+
+  // Init placement
+  updateEntityPosition(playerGroup, theta, phi);
+  agents.forEach(a => updateEntityPosition(a.group, a.theta, a.phi));
+  updateCamera();
+
+  function animate() {
+    requestAnimationFrame(animate);
+    planet.rotation.y += 0.001;
+
+    const now = performance.now();
+
+    if (keys['shift']) {
+      // Zoom & speed ease-in
+      zoomHold = Math.min(1, zoomHold + zoomHoldAccel);
+      const ease = zoomHold * zoomHold;
+      cameraDistance = THREE.MathUtils.clamp(
+        cameraDistance + baseZoomSpeed * ease,
+        minCameraDistance,
+        maxCameraDistance
+      );
+      speedMultiplier = Math.min(maxSpeedMultiplier, speedMultiplier + speedAccel);
+
+      // Bursts every interval
+      if (now - lastBurstTime >= burstInterval) {
+        agents.forEach(agent => {
+          agent.value += burstAmount * agent.multiplier;
+        });
+        lastBurstTime = now;
+      }
+
+      // Update pillars
+      agents.forEach(agent => {
+        agent.pillar.visible = true;
+        agent.pillar.scale.set(1, agent.value, 1);
+        agent.pillar.position.set(
+          0,
+          agentHeight + agentRadius + agent.value / 2,
+          0
+        );
+      });
+    } else {
+      // Reset on release
+      zoomHold = 0;
+      cameraDistance = THREE.MathUtils.clamp(
+        cameraDistance - baseZoomSpeed,
+        minCameraDistance,
+        initialCameraDistance
+      );
+      speedMultiplier = Math.max(1, speedMultiplier - speedAccel);
+      lastBurstTime = now;
+
+      agents.forEach(agent => {
+        agent.value = 0;
+        agent.pillar.visible = false;
+        agent.pillar.scale.set(1, 0, 1);
+      });
+    }
+
+    // Player movement
+    if (keys['a'] || keys['arrowleft']) phi += moveSpeed;
+    if (keys['d'] || keys['arrowright']) phi -= moveSpeed;
+    if (keys['w'] || keys['arrowup'])   theta = THREE.MathUtils.clamp(theta - moveSpeed, 0.01, Math.PI - 0.01);
+    if (keys['s'] || keys['arrowdown']) theta = THREE.MathUtils.clamp(theta + moveSpeed, 0.01, Math.PI - 0.01);
+    updateEntityPosition(playerGroup, theta, phi);
+
+    // Agents movement
+    agents.forEach(agent => {
+      const currentSpeed = agent.speed * speedMultiplier;
+      agent.theta = THREE.MathUtils.lerp(agent.theta, agent.targetTheta, currentSpeed);
+      agent.phi   = THREE.MathUtils.lerp(agent.phi,   agent.targetPhi,   currentSpeed);
+      updateEntityPosition(agent.group, agent.theta, agent.phi);
+      if (Math.abs(agent.theta - agent.targetTheta) < 0.005 && Math.abs(agent.phi - agent.targetPhi) < 0.005) {
+        agent.targetTheta = THREE.MathUtils.clamp(agent.theta + (Math.random() - 0.5) * maxOffset, 0.01, Math.PI - 0.01);
+        agent.targetPhi = agent.phi + (Math.random() - 0.5) * maxOffset;
+      }
+    });
+
+    updateCamera();
+    renderer.render(scene, camera);
+  }
+
+  animate();
+  window.addEventListener('resize', () => {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+  });
+</script>
+</body>
+</html>
