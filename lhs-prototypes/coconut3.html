@@ -1,0 +1,492 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>JavaScript Game Prototype</title>
+    <style>
+        body { margin: 0; overflow: hidden; }
+        canvas { display: block; background: aqua; }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        let width = window.innerWidth;
+        let height = window.innerHeight;
+        canvas.width = width;
+        canvas.height = height;
+
+        window.addEventListener('resize', () => {
+            width = window.innerWidth;
+            height = window.innerHeight;
+            canvas.width = width;
+            canvas.height = height;
+        });
+
+        // Coconut tree
+        const tree = { x: 200, y: 100, width: 40, height: 80 };
+        // Water location (for fishing)
+        const water = { x: 600, y: 300 };
+
+        // Player
+        const player = { x: tree.x, y: tree.y, radius: 15, speed: 3, color: 'blue', currency: 0 };
+
+        // Agents
+        const agentNames = ['Alex', 'Jordan', 'Casey', 'Robin', 'Taylor', 'Morgan', 'Riley', 'Jamie', 'Cameron', 'Dana'];
+        const agentColors = ['red', 'orange', 'yellow', 'green', 'purple'];
+        const agents = [];
+        const blobRadius = 150 * 5;
+        const agentPlacementRadius = blobRadius * 0.8;
+        const roles = ['fisher', 'fisher', 'fishEater', 'fishEater', 'coconutEater'];
+        for (let i = 0; i < 5; i++) {
+            const angle = (i / 5) * Math.PI * 2;
+            const ax = tree.x + Math.cos(angle) * agentPlacementRadius;
+            const ay = tree.y + Math.sin(angle) * agentPlacementRadius;
+            const nameIndex = Math.floor(Math.random() * agentNames.length);
+            const name = agentNames.splice(nameIndex, 1)[0];
+            agents.push({
+                x: ax, y: ay, originalX: ax, originalY: ay,
+                radius: player.radius, color: agentColors[i], name: name,
+                role: roles[i], state: 'idle', target: null, payValue: i + 1, currency: 10,
+                lieTimer: null, queuedAction: null, // queuedAction: { type: 'eatCoconut', targetIndex: n } or 'fish' or 'lie'
+            });
+        }
+
+        // Coconuts
+        const coconuts = [];
+        // Fish
+        const fish = [];
+        // Sale dots
+        const saleDots = [];
+        // Pop-ups
+        const popups = [];
+        // Selection state
+        let selectionMode = false;
+        let selectedIndex = 0;
+        let selectionTarget = null;
+
+        // Turn management
+        let turnPhase = 'player'; // 'player' or 'agents'
+        let agentTurnIndex = 0;
+        const agentTurnDuration = 60; // frames per turn
+
+        // Camera
+        const camera = { x: player.x, y: player.y, lag: 0.1, focusAgentIndex: null };
+
+        // Blob splines
+        const blobPoints = [];
+        const blobSegments = 12;
+        for (let i = 0; i < blobSegments; i++) {
+            const angle = (i / blobSegments) * Math.PI * 2;
+            const radius = blobRadius * (0.7 + Math.random() * 0.3);
+            const bx = tree.x + Math.cos(angle) * radius;
+            const by = tree.y + Math.sin(angle) * radius;
+            blobPoints.push({ x: bx, y: by });
+        }
+
+        // Input
+        const keys = {};
+        window.addEventListener('keydown', (e) => {
+            keys[e.key] = true;
+            if (['w','a','s','d','e','ArrowUp','ArrowDown',' '].includes(e.key)) e.preventDefault();
+        });
+        window.addEventListener('keyup', (e) => { keys[e.key] = false; });
+
+        function startAgentTurns() {
+            turnPhase = 'agents';
+            agentTurnIndex = 0;
+            agents.forEach(a => a.lieTimer = null);
+        }
+
+        function update() {
+            // Handle agent turns
+            if (turnPhase === 'agents') {
+                if (agentTurnIndex < agents.length) {
+                    const agent = agents[agentTurnIndex];
+                    if (agent.queuedAction && agent.queuedAction.type === 'eatCoconut') {
+                        const targetIdx = agent.queuedAction.targetIndex;
+                        const coc = coconuts[targetIdx];
+                        if (agent.state === 'idle') {
+                            agent.state = 'toCoconut';
+                            agent.target = coc;
+                            camera.focusAgentIndex = agentTurnIndex;
+                        }
+                        if (agent.state === 'toCoconut') {
+                            const dx = agent.target.x - agent.x;
+                            const dy = agent.target.y - agent.y;
+                            const dist = Math.hypot(dx, dy);
+                            const step = 2;
+                            if (dist > step) {
+                                agent.x += (dx / dist) * step;
+                                agent.y += (dy / dist) * step;
+                            } else {
+                                if (!agent.target.eaten) {
+                                    agent.target.eaten = true;
+                                    popups.push({ text: 'FOOD', x: agent.x, y: agent.y - 20, alpha: 1, color: 'green', dy: 0.5 });
+                                    saleDots.push({ x: agent.x, y: agent.y, targetX: player.x, targetY: player.y, value: agent.payValue });
+                                }
+                                agent.state = 'return';
+                            }
+                        } else if (agent.state === 'return') {
+                            const dx = agent.originalX - agent.x;
+                            const dy = agent.originalY - agent.y;
+                            const dist = Math.hypot(dx, dy);
+                            const step = 2;
+                            if (dist > step) {
+                                agent.x += (dx / dist) * step;
+                                agent.y += (dy / dist) * step;
+                            } else {
+                                agent.state = 'idle';
+                                agent.queuedAction = null;
+                                agentTurnIndex++;
+                                camera.focusAgentIndex = null;
+                            }
+                        }
+                    } else if (agent.role === 'fisher' && agent.queuedAction && agent.queuedAction.type === 'fish') {
+                        if (agent.state === 'idle') {
+                            agent.state = 'toWater';
+                            agent.target = { x: water.x, y: water.y };
+                            camera.focusAgentIndex = agentTurnIndex;
+                        }
+                        if (agent.state === 'toWater') {
+                            const dx = agent.target.x - agent.x;
+                            const dy = agent.target.y - agent.y;
+                            const dist = Math.hypot(dx, dy);
+                            const step = 2;
+                            if (dist > step) {
+                                agent.x += (dx / dist) * step;
+                                agent.y += (dy / dist) * step;
+                            } else {
+                                const angle = Math.random() * Math.PI * 2;
+                                const distance = 50 + Math.random() * 100;
+                                const endX = agent.x + Math.cos(angle) * distance;
+                                const endY = agent.y + Math.sin(angle) * distance;
+                                fish.push({ startX: agent.x, startY: agent.y, endX, endY, x: agent.x, y: agent.y, t: 0, duration: 30, radius: 8, color: 'blue', eaten: false });
+                                agent.state = 'return';
+                            }
+                        } else if (agent.state === 'return') {
+                            const dx = agent.originalX - agent.x;
+                            const dy = agent.originalY - agent.y;
+                            const dist = Math.hypot(dx, dy);
+                            const step = 2;
+                            if (dist > step) {
+                                agent.x += (dx / dist) * step;
+                                agent.y += (dy / dist) * step;
+                            } else {
+                                agent.state = 'idle';
+                                agent.queuedAction = null;
+                                agentTurnIndex++;
+                                camera.focusAgentIndex = null;
+                            }
+                        }
+                    } else if (agent.role === 'fishEater' && agent.queuedAction && agent.queuedAction.type === 'eatFish') {
+                        const available = fish.find(f => !f.eaten && f.t >= f.duration);
+                        if (agent.state === 'idle') {
+                            if (available) {
+                                agent.state = 'toFish';
+                                agent.target = available;
+                                camera.focusAgentIndex = agentTurnIndex;
+                            } else {
+                                agent.queuedAction = null;
+                                agentTurnIndex++;
+                                return;
+                            }
+                        }
+                        if (agent.state === 'toFish') {
+                            const dx = agent.target.x - agent.x;
+                            const dy = agent.target.y - agent.y;
+                            const dist = Math.hypot(dx, dy);
+                            const step = 2;
+                            if (dist > step) {
+                                agent.x += (dx / dist) * step;
+                                agent.y += (dy / dist) * step;
+                            } else {
+                                if (!agent.target.eaten) {
+                                    agent.target.eaten = true;
+                                    popups.push({ text: 'FISH', x: agent.x, y: agent.y - 20, alpha: 1, color: 'cyan', dy: 0.5 });
+                                    saleDots.push({ x: agent.x, y: agent.y, targetX: player.x, targetY: player.y, value: agent.payValue });
+                                }
+                                agent.state = 'return';
+                            }
+                        } else if (agent.state === 'return') {
+                            const dx = agent.originalX - agent.x;
+                            const dy = agent.originalY - agent.y;
+                            const dist = Math.hypot(dx, dy);
+                            const step = 2;
+                            if (dist > step) {
+                                agent.x += (dx / dist) * step;
+                                agent.y += (dy / dist) * step;
+                            } else {
+                                agent.state = 'idle';
+                                agent.queuedAction = null;
+                                agentTurnIndex++;
+                                camera.focusAgentIndex = null;
+                            }
+                        }
+                    } else {
+                        // Lying in grass
+                        if (agent.lieTimer === null) {
+                            agent.lieTimer = agentTurnDuration;
+                            camera.focusAgentIndex = agentTurnIndex;
+                            popups.push({ text: 'Lying in grass', x: agent.x, y: agent.y - 20, alpha: 1, color: 'white', dy: 0.5 });
+                        }
+                        if (agent.lieTimer > 0) {
+                            agent.lieTimer--;
+                        } else {
+                            agent.lieTimer = null;
+                            agentTurnIndex++;
+                            camera.focusAgentIndex = null;
+                        }
+                    }
+                } else {
+                    turnPhase = 'player';
+                    camera.focusAgentIndex = null;
+                }
+            }
+
+            // Camera follow logic
+            if (camera.focusAgentIndex !== null) {
+                const focusAgent = agents[camera.focusAgentIndex];
+                camera.x += (focusAgent.x - camera.x) * 0.1;
+                camera.y += (focusAgent.y - camera.y) * 0.1;
+            } else {
+                camera.x += (player.x - camera.x) * camera.lag;
+                camera.y += (player.y - camera.y) * camera.lag;
+            }
+
+            if (turnPhase === 'player') {
+                if (selectionMode) {
+                    if (keys['ArrowUp']) { selectedIndex = (selectedIndex - 1 + agents.length) % agents.length; keys['ArrowUp'] = false; }
+                    if (keys['ArrowDown']) { selectedIndex = (selectedIndex + 1) % agents.length; keys['ArrowDown'] = false; }
+                    if (keys[' ']) {
+                        keys[' '] = false;
+                        const agent = agents[selectedIndex];
+                        // Queue a single eatCoconut action for that specific coconut
+                        agent.queuedAction = { type: 'eatCoconut', targetIndex: selectionTarget };
+                        startAgentTurns();
+                        selectionMode = false;
+                    }
+                    return;
+                }
+
+                // Player movement
+                if (keys['w']) player.y -= player.speed;
+                if (keys['s']) player.y += player.speed;
+                if (keys['a']) player.x -= player.speed;
+                if (keys['d']) player.x += player.speed;
+
+                // Interaction on E
+                if (keys['e']) {
+                    keys['e'] = false;
+                    const dxTree = player.x - tree.x;
+                    const dyTree = player.y - tree.y;
+                    if (Math.hypot(dxTree, dyTree) < 60) {
+                        const angle = Math.random() * Math.PI * 2;
+                        const distance = 50 + Math.random() * 100;
+                        const endX = tree.x + Math.cos(angle) * distance;
+                        const endY = tree.y + Math.sin(angle) * distance;
+                        coconuts.push({ startX: tree.x, startY: tree.y - tree.height/2, endX, endY, x: tree.x, y: tree.y - tree.height/2, t: 0, duration:30, radius:10, color:'brown', eaten:false });
+                        startAgentTurns();
+                        return;
+                    }
+                    for (let i = 0; i < coconuts.length; i++) {
+                        const coc = coconuts[i];
+                        if (!coc.eaten) {
+                            const dxC = player.x - coc.x;
+                            const dyC = player.y - coc.y;
+                            if (Math.hypot(dxC, dyC) < 30 && coc.t >= coc.duration) {
+                                selectionMode = true;
+                                selectedIndex = 0;
+                                selectionTarget = i;
+                                return;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Update coconuts motion
+            for (const coc of coconuts) {
+                if (!coc.eaten && coc.t < coc.duration) {
+                    const progress = coc.t / coc.duration;
+                    coc.x = coc.startX + (coc.endX - coc.startX) * progress;
+                    coc.y = coc.startY + (coc.endY - coc.startY) * progress;
+                    coc.t++;
+                } else if (!coc.eaten) {
+                    coc.x = coc.endX;
+                    coc.y = coc.endY;
+                }
+            }
+            // Update fish motion
+            for (const f of fish) {
+                if (!f.eaten && f.t < f.duration) {
+                    const progress = f.t / f.duration;
+                    f.x = f.startX + (f.endX - f.startX) * progress;
+                    f.y = f.startY + (f.endY - f.startY) * progress;
+                    f.t++;
+                } else if (!f.eaten) {
+                    f.x = f.endX;
+                    f.y = f.endY;
+                }
+            }
+
+            // Update sale dots
+            for (let i = saleDots.length - 1; i >= 0; i--) {
+                const dot = saleDots[i];
+                const dx = dot.targetX - dot.x;
+                const dy = dot.targetY - dot.y;
+                const dist = Math.hypot(dx, dy);
+                const speed = 3;
+                if (dist > speed) {
+                    dot.x += (dx / dist) * speed;
+                    dot.y += (dy / dist) * speed;
+                } else {
+                    player.currency += dot.value;
+                    popups.push({ text:'SALE', x: player.x, y: player.y - 20, alpha: 1, color:'yellow', dy: 0.5 });
+                    saleDots.splice(i, 1);
+                }
+            }
+
+            // Update pop-ups
+            for (let i = popups.length - 1; i >= 0; i--) {
+                const p = popups[i];
+                p.y -= p.dy;
+                p.alpha -= 0.01;
+                if (p.alpha <= 0) popups.splice(i, 1);
+            }
+        }
+
+        function drawBlob() {
+            const pts = blobPoints.map(p => ({ x: (p.x - camera.x) + width / 2, y: (p.y - camera.y) + height / 2 }));
+            ctx.fillStyle = 'limegreen';
+            ctx.beginPath();
+            const n = pts.length;
+            const last = pts[n - 1];
+            const first = pts[0];
+            const midX0 = (last.x + first.x) / 2;
+            const midY0 = (last.y + first.y) / 2;
+            ctx.moveTo(midX0, midY0);
+            for (let i = 0; i < n; i++) {
+                const curr = pts[i];
+                const next = pts[(i + 1) % n];
+                const midX = (curr.x + next.x) / 2;
+                const midY = (curr.y + next.y) / 2;
+                ctx.quadraticCurveTo(curr.x, curr.y, midX, midY);
+            }
+            ctx.closePath();
+            ctx.fill();
+        }
+
+        function draw() {
+            ctx.clearRect(0, 0, width, height);
+            drawBlob();
+
+            // Draw water (small circle)
+            const waterScreenX = (water.x - camera.x) + width / 2;
+            const waterScreenY = (water.y - camera.y) + height / 2;
+            ctx.fillStyle = 'navy';
+            ctx.beginPath();
+            ctx.arc(waterScreenX, waterScreenY, 30, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Draw coconut tree
+            const treeScreenX = (tree.x - camera.x) + width / 2;
+            const treeScreenY = (tree.y - camera.y) + height / 2;
+            ctx.fillStyle = 'saddlebrown';
+            ctx.fillRect(treeScreenX - tree.width / 2, treeScreenY - tree.height / 2, tree.width, tree.height);
+            ctx.fillStyle = 'green';
+            ctx.beginPath();
+            ctx.arc(treeScreenX, treeScreenY - tree.height / 2, 50, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Draw coconuts
+            for (const coc of coconuts) {
+                if (!coc.eaten) {
+                    const cx = (coc.x - camera.x) + width / 2;
+                    const cy = (coc.y - camera.y) + height / 2;
+                    ctx.fillStyle = coc.color;
+                    ctx.beginPath();
+                    ctx.arc(cx, cy, coc.radius, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            }
+
+            // Draw fish
+            for (const f of fish) {
+                if (!f.eaten) {
+                    const fx = (f.x - camera.x) + width / 2;
+                    const fy = (f.y - camera.y) + height / 2;
+                    ctx.fillStyle = f.color;
+                    ctx.beginPath();
+                    ctx.arc(fx, fy, f.radius, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            }
+
+            // Compute total money
+            let totalMoney = player.currency;
+            for (const a of agents) totalMoney += a.currency;
+
+            // Draw player and agents with currency bars
+            function drawEntity(ent) {
+                const screenX = (ent.x - camera.x) + width / 2;
+                const screenY = (ent.y - camera.y) + height / 2;
+                ctx.fillStyle = ent.color;
+                ctx.beginPath();
+                ctx.arc(screenX, screenY, ent.radius, 0, Math.PI * 2);
+                ctx.fill();
+                const barW = 6, barH = 30;
+                const barX = screenX - barW / 2;
+                const barY = screenY - ent.radius - barH - 5;
+                ctx.fillStyle = 'rgba(0,0,0,0.3)'; ctx.fillRect(barX, barY, barW, barH);
+                const pct = totalMoney > 0 ? ent.currency / totalMoney : 0;
+                const fillH = pct * barH;
+                ctx.fillStyle = 'yellow';
+                ctx.fillRect(barX, barY + (barH - fillH), barW, fillH);
+            }
+            drawEntity(player);
+            for (const agent of agents) drawEntity(agent);
+
+            // Draw sale dots
+            for (const dot of saleDots) {
+                const dx = (dot.x - camera.x) + width / 2;
+                const dy = (dot.y - camera.y) + height / 2;
+                ctx.fillStyle = 'yellow';
+                ctx.beginPath(); ctx.arc(dx, dy, 5, 0, Math.PI * 2); ctx.fill();
+            }
+
+            // Draw pop-ups
+            for (const p of popups) {
+                const sx = (p.x - camera.x) + width / 2;
+                const sy = (p.y - camera.y) + height / 2;
+                ctx.globalAlpha = p.alpha;
+                ctx.fillStyle = p.color;
+                ctx.font = 'bold 20px Arial';
+                ctx.fillText(p.text, sx, sy);
+                ctx.globalAlpha = 1;
+            }
+
+            // Draw selection UI
+            if (selectionMode) {
+                const uiW = 250, uiH = 40 * agents.length + 20;
+                const ux = width / 2 - uiW / 2, uy = height / 2 - uiH / 2;
+                ctx.fillStyle = 'rgba(0,0,0,0.7)'; ctx.fillRect(ux, uy, uiW, uiH);
+                ctx.font = '20px Arial';
+                for (let i = 0; i < agents.length; i++) {
+                    const agent = agents[i];
+                    const ty = uy + 40 * i + 30;
+                    if (i === selectedIndex) { ctx.fillStyle = 'yellow'; ctx.fillRect(ux + 5, ty - 20, uiW - 10, 30); }
+                    ctx.fillStyle = agent.color; ctx.beginPath(); ctx.arc(ux + 20, ty - 5, 10, 0, Math.PI * 2); ctx.fill();
+                    ctx.fillStyle = 'white'; ctx.fillText(agent.name, ux + 40, ty);
+                }
+            }
+        }
+
+        function gameLoop() { update(); draw(); requestAnimationFrame(gameLoop); }
+        gameLoop();
+    </script>
+</body>
+</html>
