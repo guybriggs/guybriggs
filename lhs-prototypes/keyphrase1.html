@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>NPC Chat - Demo</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
+  <style>
+    body {
+      margin: 0;
+      background: url('https://i.ibb.co/qFcWPwWK/TALKINGTOGETHER.png') no-repeat center center fixed;
+      background-size: cover;
+      font-family: 'Inter', sans-serif;
+      color: white;
+      overflow: hidden;
+    }
+
+    .chat-panel {
+      position: absolute;
+      top: 0;
+      left: 100px;
+      width: 420px;
+      height: calc(100vh - 30px);
+      background: rgba(20, 20, 20, 0.85);
+      backdrop-filter: blur(4px);
+      display: flex;
+      flex-direction: column;
+      padding: 20px;
+      border-right: 1px solid rgba(255, 255, 255, 0.1);
+    }
+
+    .chat-container {
+      flex: 1;
+      overflow-y: auto;
+      padding-right: 5px;
+      font-size: 15px;
+      line-height: 1.6;
+    }
+
+    .input-container {
+      display: flex;
+      margin-top: 16px;
+      gap: 10px;
+    }
+
+    input[type="text"] {
+      flex: 1;
+      padding: 12px 14px;
+      font-size: 15px;
+      border: none;
+      border-radius: 6px;
+      background: #333;
+      color: white;
+    }
+
+    button {
+      padding: 12px 18px;
+      font-size: 15px;
+      background: #5c6bc0;
+      color: white;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-weight: 600;
+    }
+
+    button:hover {
+      background: #3f51b5;
+    }
+
+.floating-phrase {
+  position: absolute;
+  bottom: 50px;
+  font-size: 16px;
+  font-weight: bold;
+  color: #ffcc00;
+  pointer-events: none;
+  opacity: 0;
+  animation: floatUp 4s ease-out;
+  text-shadow: 0 0 10px #ffcc00;
+  width: max-content;
+      text-transform: capitalize;
+}
+
+    @keyframes floatUp {
+      0% {
+        transform: translateY(0);
+        opacity: 0;
+      }
+      10% {
+        opacity: 1;
+      }
+      90% {
+        opacity: 1;
+      }
+      100% {
+        transform: translateY(-30px);
+        opacity: 0;
+      }
+    }
+
+    del {
+      color: #aaa;
+    }
+
+.player-message {
+  color: #00f6ff;
+  text-shadow: 0 0 8px #00f6ff, 0 0 16px #00f6ff;
+  font-weight: 600;
+}
+
+.used-phrases-box {
+  position: absolute;
+  top: 25px;
+  left: 570px;
+  background: black;
+  padding: 10px;
+  border-radius: 6px;
+  max-width: 200px;
+  line-height: 1.5;
+  text-align: left;
+}
+
+.used-phrases-box .floating-phrase {
+    position: static!important;
+    animation: none!important;
+    opacity: 1!important;
+    color: #aaa!important;
+}
+
+  </style>
+</head>
+<body>
+
+  <div class="chat-panel">
+    <div class="chat-container" id="chat"></div>
+
+    <div class="input-container">
+      <input type="text" id="input" placeholder="Say something..." />
+      <button onclick="sendMessage()">Send</button>
+    </div>
+  </div>
+
+<div class="used-phrases-box" id="usedBox">
+  <!-- Content updated dynamically -->
+</div>
+
+  <!-- Container for animated phrases -->
+  <div id="floatingPhraseContainer"></div>
+
+  <script>
+    const input = document.getElementById('input');
+    const chat = document.getElementById('chat');
+    const phraseContainer = document.getElementById('floatingPhraseContainer');
+
+    const allPhrases = [
+      "hello", "stamina", "opportunity cost", "scarcity",
+      "marginal benefit", "production possibilities", "PPC",
+      "mutton", "coconut"
+    ];
+
+    const phraseResponses = {
+      "hello": "A fine hello to you too! It's nice to hear a kind word around here.",
+      "stamina": "Stamina? I lost that years ago... but it's important to keep going, always.",
+      "opportunity cost": "Every choice costs something, even if you can't see it. That's opportunity cost for ya.",
+      "scarcity": "Ain’t enough to go around. Scarcity makes things valuable, y'know?",
+      "marginal benefit": "One more hour of fishing? The benefit better be worth the sunburn!",
+      "production possibilities": "You can’t make everything at once, boy. Gotta choose your priorities.",
+      "PPC": "Ah, the ol’ Production Possibilities Curve. It’s a graph of dreams and limits.",
+      "mutton": "Mutton stew kept me alive through the winters. Can’t beat it.",
+      "coconut": "Crack it right and you’ve got food, drink, and a bowl in one."
+    };
+
+    let discoveredPhrases = ["hello"];
+    let usedPhrases = [];
+
+    function appendMessage(sender, text) {
+    const msg = document.createElement('div');
+    msg.className = sender === 'player' ? 'player-message' : 'npc-message';
+    msg.textContent = `${sender === 'player' ? 'You' : 'Oliver'}: ${text}`;
+    chat.appendChild(msg);
+      chat.scrollTop = chat.scrollHeight;
+    }
+
+    function sendMessage() {
+      const userMessage = input.value.trim().toLowerCase();
+      if (!userMessage) return;
+
+      appendMessage('player', userMessage);
+      input.value = '';
+
+      setTimeout(() => {
+        const matched = discoveredPhrases.find(p => userMessage.includes(p) && !usedPhrases.includes(p));
+        if (matched) {
+          appendMessage('npc', phraseResponses[matched]);
+          usedPhrases.push(matched);
+      updateUsedBox();
+
+        // Reveal 1–2 more phrases
+        const undiscovered = allPhrases.filter(p => !discoveredPhrases.includes(p));
+        const toReveal = undiscovered.slice(0, Math.random() > 0.5 ? 2 : 1);
+        discoveredPhrases.push(...toReveal);
+
+        } else {
+          appendMessage('npc', "What's that, sonny? You'll have to speak up.");
+        }
+      }, 500);
+    }
+
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') sendMessage();
+    });
+
+    window.onload = () => {
+      appendMessage('npc', "Hello there young'un! I'm Oliver!");
+      startFloatingPhrases();
+    };
+
+
+function startFloatingPhrases() {
+  let index = 0;
+  setInterval(() => {
+    const floatable = discoveredPhrases.filter(p => !usedPhrases.includes(p));
+    if (floatable.length === 0) return;
+
+    const phrase = floatable[index % floatable.length];
+    const span = document.createElement('div');
+    span.className = 'floating-phrase';
+    span.style.left = `${Math.floor(100 + Math.random() * 280)}px`;
+    span.textContent = phrase + '?';
+
+    phraseContainer.appendChild(span);
+    setTimeout(() => {
+      phraseContainer.removeChild(span);
+    }, 4000);
+
+    index++;
+  }, 2000);
+}
+
+function updateUsedBox() {
+  const usedBox = document.getElementById('usedBox');
+  usedBox.innerHTML = usedPhrases.map(p => `<del class="floating-phrase">${p}</del>`).join('<br>');
+}
+  </script>
+
+</body>
+</html>
