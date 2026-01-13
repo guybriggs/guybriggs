@@ -26,13 +26,11 @@ const btnLogin = $("btnLogin");
 const btnSignup = $("btnSignup");
 
 const flows = {
+  // unchanged
   login: [{ key: "credentials", label: "Login" }],
-  signup: [
-    { key: "welcome", label: "Welcome" },
-    { key: "details", label: "Details" },
-    { key: "verify", label: "Verify" },
-    { key: "done", label: "Done" }
-  ]
+
+  // NEW: simple one-screen signup
+  signup: [{ key: "simple", label: "Sign up" }]
 };
 
 function getFlow() {
@@ -117,28 +115,8 @@ function setAlt(show, text) {
 
 function renderStepper() {
   if (!authStepper) return;
-
-  // No stepper for login
-  if (state.mode === "login") {
-    authStepper.innerHTML = "";
-    authStepper.style.display = "none";
-    return;
-  }
-
-  authStepper.style.display = "";
-
-  const flow = getFlow();
-  const activeIndex = state.step;
-
   authStepper.innerHTML = "";
-  flow.forEach((s, idx) => {
-    const chip = document.createElement("div");
-    chip.className = "chip";
-    chip.textContent = s.label;
-    if (idx < activeIndex) chip.classList.add("done");
-    if (idx === activeIndex) chip.classList.add("active");
-    authStepper.appendChild(chip);
-  });
+  authStepper.style.display = "none";
 }
 
 function field(label, type, value, onInput, opts = {}) {
@@ -172,13 +150,19 @@ function validateStep() {
   if (!def) return true;
 
   if (state.mode === "login") {
-    if (def.key === "credentials") return !!d.loginEmail.trim() && !!d.loginPassword.trim();
+    if (def.key === "credentials") {
+      return !!d.loginEmail.trim() && !!d.loginPassword.trim();
+    }
     return true;
   }
 
-  if (def.key === "welcome") return true;
-  if (def.key === "details") return !!d.name.trim() && !!d.email.trim();
-  if (def.key === "verify") return state.method === "otp" ? !!d.otp.trim() : !!d.password.trim();
+  if (state.mode === "signup") {
+    if (def.key === "simple") {
+      return !!d.email.trim();
+    }
+    return true;
+  }
+
   return true;
 }
 
@@ -196,15 +180,12 @@ function nextStep() {
     return;
   }
 
-  if (state.mode === "login") {
+  // For this prototype: login and signup both just close + set logged-in UI
+  if (state.mode === "login" || state.mode === "signup") {
     closeAuth();
     setLoggedInUI(true);
     return;
   }
-
-  const flow = getFlow();
-  if (state.step < flow.length - 1) state.step += 1;
-  renderAuth();
 }
 
 function prevStep() {
@@ -273,7 +254,7 @@ function renderLoginStep(def) {
   emailInput.value = state.data.loginEmail || "";
   emailInput.className =
     "w-full rounded-full border border-slate-200 px-6 py-3 " +
-    "text-[15px] placeholder-slate-400 " +
+    "text-[15px] placeholder-slate-400 text-center " +
     "shadow-[0_2px_6px_rgba(15,23,42,0.08)] " +
     "focus:outline-none focus:ring-2 focus:ring-[#58cc02]/60 focus:border-[#58cc02]/60";
   emailInput.autocomplete = "email";
@@ -294,9 +275,9 @@ function renderLoginStep(def) {
   passwordInput.value = state.data.loginPassword || "";
   passwordInput.className =
     "w-full rounded-full border border-slate-200 px-6 py-3 " +
-    "text-[15px] placeholder-slate-400 " +
+    "text-[15px] placeholder-slate-400 text-center " +
     "shadow-[0_2px_6px_rgba(15,23,42,0.08)] " +
-    "focus:outline-none focus:ring-2 focus:ring-[#58cc02]/60 focus:border-[#58cc02]/60 mt-3";
+    "focus:outline-none focus:ring-2 focus:ring-[#58cc02]/60 focus:border-[#58cc02]/60 mt-1";
   passwordInput.autocomplete = "current-password";
   passwordInput.addEventListener("input", (e) => {
     state.data.loginPassword = e.target.value;
@@ -312,7 +293,7 @@ function renderLoginStep(def) {
   loginBtn.type = "button";
   loginBtn.textContent = "LOGIN";
   loginBtn.className =
-    "mt-4 w-full rounded-full bg-[#58cc02] text-white " +
+    "mt-2 w-full rounded-full bg-[#58cc02] text-white " +
     "font-extrabold uppercase tracking-[0.08em] py-3 " +
     "shadow-[0_8px_20px_rgba(0,0,0,0.25)]";
   loginBtn.addEventListener("click", () => nextStep());
@@ -320,13 +301,17 @@ function renderLoginStep(def) {
 
   // "OR Click here to Sign Up"
   const footer = document.createElement("div");
-  footer.className = "mt-6 text-center text-slate-400 text-sm";
+  footer.className =
+    "mt-6 text-center text-[13px] text-slate-400 font-bold tracking-wide";
+
   const orText = document.createElement("span");
-  orText.textContent = "OR ";
+  orText.textContent = "or ";
+
   const signupLink = document.createElement("button");
   signupLink.type = "button";
-  signupLink.className = "text-slate-500 underline font-semibold";
-  signupLink.textContent = "Click here to Sign Up";
+  signupLink.className =
+    "ml-1 text-slate-400 font-bold tracking-wide underline cursor-pointer hover:text-slate-500";
+  signupLink.textContent = "Click here to register";
   signupLink.addEventListener("click", () => openAuth("signup"));
 
   footer.appendChild(orText);
@@ -338,110 +323,100 @@ function renderLoginStep(def) {
 
 
 function renderSignupStep(def) {
-  if (authTitle) authTitle.textContent = "Create account";
-  if (authSubtitle) authSubtitle.textContent = "Prototype flow";
+  // Match the login look: no title/subtitle, no bottom actions bar
+  if (authTitle) authTitle.textContent = "";
+  if (authSubtitle) authSubtitle.textContent = "";
+  if (authActions) authActions.style.display = "none";
 
-  // Show the bottom actions row again for the multi-step signup flow
-  if (authActions) authActions.style.display = "";
+  if (!authContent) return;
 
-  const form = document.createElement("div");
-  form.className = "ui form";
+  authContent.innerHTML = "";
 
-  if (def.key === "welcome") {
-    const box = document.createElement("div");
-    box.className = "centered";
-    box.innerHTML = `
-      <div style="font-weight: 900; font-size: 16px; margin-bottom: 8px;">Welcome!</div>
-      <div class="muted">You’ll enter details, verify, and finish setup.</div>
-    `;
-    form.appendChild(box);
+  const wrapper = document.createElement("div");
+  wrapper.className =
+    "w-full max-w-[420px] mx-auto flex flex-col items-stretch gap-3 py-10";
+
+  // Same social buttons as login
+  function socialButton(iconClasses, label) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className =
+      "w-full flex items-center justify-center gap-3 rounded-full " +
+      "bg-slate-100 text-slate-700 font-semibold py-3 px-6 " +
+      "shadow-[0_2px_6px_rgba(15,23,42,0.15)]";
+
+    const icon = document.createElement("i");
+    icon.className = iconClasses + " text-slate-500";
+    btn.appendChild(icon);
+
+    const span = document.createElement("span");
+    span.textContent = label;
+    btn.appendChild(span);
+
+    return btn;
   }
 
-  if (def.key === "details") {
-    form.appendChild(
-      field("Name", "text", state.data.name, (v) => (state.data.name = v), {
-        placeholder: "Your name",
-        autocomplete: "name",
-        onEnter: nextStep
-      })
-    );
+  wrapper.appendChild(
+    socialButton("fa-solid fa-phone", "Continue with Phone Number")
+  );
+  wrapper.appendChild(
+    socialButton("fa-brands fa-google", "Continue with Google")
+  );
+  wrapper.appendChild(
+    socialButton("fa-brands fa-apple", "Continue with Apple")
+  );
 
-    form.appendChild(
-      field("Email", "email", state.data.email, (v) => (state.data.email = v), {
-        placeholder: "name@example.com",
-        autocomplete: "email",
-        onEnter: nextStep
-      })
-    );
+  // Email only (no password)
+  const emailWrap = document.createElement("div");
+  emailWrap.className = "mt-4";
+  const emailInput = document.createElement("input");
+  emailInput.type = "email";
+  emailInput.placeholder = "Enter email here";
+  emailInput.value = state.data.email || "";
+  emailInput.className =
+    "w-full rounded-full border border-slate-200 px-6 py-3 " +
+    "text-[15px] placeholder-slate-400 text-center " +
+    "shadow-[0_2px_6px_rgba(15,23,42,0.08)] " +
+    "focus:outline-none focus:ring-2 focus:ring-[#58cc02]/60 focus:border-[#58cc02]/60";
+  emailInput.autocomplete = "email";
+  emailInput.addEventListener("input", (e) => {
+    state.data.email = e.target.value;
+  });
+  emailInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") nextStep();
+  });
+  emailWrap.appendChild(emailInput);
+  wrapper.appendChild(emailWrap);
 
-    const hint = document.createElement("div");
-    hint.className = "hint";
-    hint.textContent = "Next you’ll verify your account.";
-    form.appendChild(hint);
-  }
+  // Green CONTINUE button (same style as LOGIN)
+  const continueBtn = document.createElement("button");
+  continueBtn.type = "button";
+  continueBtn.textContent = "CONTINUE";
+  continueBtn.className =
+    "mt-3 w-full rounded-full bg-[#58cc02] text-white " +
+    "font-extrabold uppercase tracking-[0.08em] py-3 " +
+    "shadow-[0_8px_20px_rgba(0,0,0,0.25)]";
+  continueBtn.addEventListener("click", () => nextStep());
+  wrapper.appendChild(continueBtn);
 
-  if (def.key === "verify") {
-    if (state.method === "otp") {
-      if (authSubtitle) authSubtitle.textContent = "We sent you a code. Enter it to verify.";
-      form.appendChild(
-        field("Verification code", "text", state.data.otp, (v) => (state.data.otp = v.replace(/\D/g, "").slice(0, 6)), {
-          placeholder: "123456",
-          autocomplete: "one-time-code",
-          onEnter: nextStep
-        })
-      );
-    } else {
-      if (authSubtitle) authSubtitle.textContent = "Set a password to secure your account.";
-      form.appendChild(
-        field("Password", "password", state.data.password, (v) => (state.data.password = v), {
-          placeholder: "Create a password",
-          autocomplete: "new-password",
-          onEnter: nextStep
-        })
-      );
-    }
+  // Footer: go back to login
+  const footer = document.createElement("div");
+  footer.className = "mt-5 text-center text-slate-400 text-sm";
+  const orText = document.createElement("span");
+  orText.textContent = "or ";
+  const loginLink = document.createElement("button");
+  loginLink.type = "button";
+  loginLink.className =
+    "text-slate-500 font-bold tracking-wide cursor-pointer hover:text-slate-600";
+  loginLink.textContent = "login";
+  loginLink.style.textTransform = "none"; // match top-right login (no all caps)
+  loginLink.addEventListener("click", () => openAuth("login"));
 
-    const hint = document.createElement("div");
-    hint.className = "hint";
-    hint.textContent = state.method === "otp" ? "Prototype code: type any 6 digits." : "Prototype password: type anything.";
-    form.appendChild(hint);
-  }
+  footer.appendChild(orText);
+  footer.appendChild(loginLink);
+  wrapper.appendChild(footer);
 
-  if (def.key === "done") {
-    const box = document.createElement("div");
-    box.className = "centered";
-    box.innerHTML = `
-      <div class="big-check">🎉</div>
-      <div style="font-weight: 900; font-size: 16px; margin-bottom: 6px;">Account created</div>
-      <div class="muted">You’re all set (prototype).</div>
-    `;
-    form.appendChild(box);
-  }
-
-  if (authContent) {
-    authContent.innerHTML = "";
-    authContent.appendChild(form);
-  }
-
-  setBack(state.step > 0);
-  setSecondary("Cancel", true);
-
-  if (def.key === "welcome") {
-    setBack(false);
-    setPrimary("Get started", "primary");
-    setAlt(false);
-  } else if (def.key === "details") {
-    setPrimary("Continue", "primary");
-    setAlt(false);
-  } else if (def.key === "verify") {
-    setPrimary(state.method === "otp" ? "Verify account" : "Create account", "primary");
-    setAlt(true, state.method === "otp" ? "Set password instead" : "Verify with code");
-  } else if (def.key === "done") {
-    setBack(false);
-    setAlt(false);
-    setSecondary("Close", true);
-    setPrimary("Go to Course", "secondary");
-  }
+  authContent.appendChild(wrapper);
 }
 
 function renderAuth() {
