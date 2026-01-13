@@ -8,11 +8,14 @@ import { hardHideMenu, dropdownEls } from "../ui/dropdowns.js";
 ========================== */
 const authOverlay = $("authOverlay");
 const authCloseBtn = $("authCloseBtn");
+const authModal = authOverlay ? authOverlay.querySelector(".ui.modal") : null;
 
 const authTitle = $("authTitle");
 const authSubtitle = $("authSubtitle");
 const authStepper = $("authStepper");
 const authContent = $("authContent");
+const authActions = $("authActions");
+
 
 const authBackBtn = $("authBackBtn");
 const authAltBtn = $("authAltBtn");
@@ -59,16 +62,34 @@ function openAuth(mode) {
     state.data.otp = "";
   }
 
-  authOverlay?.classList.add("open");
-  authOverlay?.setAttribute("aria-hidden", "false");
+  // SHOW overlay + modal (Semantic + Tailwind)
+  if (authOverlay) {
+    authOverlay.classList.add("open", "active");
+    authOverlay.classList.remove("hidden");
+    authOverlay.setAttribute("aria-hidden", "false");
+  }
+  if (authModal) {
+    authModal.classList.remove("hidden");
+    authModal.classList.add("active");
+  }
+
   document.body.style.overflow = "hidden";
+
   renderAuth();
   setTimeout(() => authPrimaryBtn?.focus(), 0);
 }
 
 function closeAuth() {
-  authOverlay?.classList.remove("open");
-  authOverlay?.setAttribute("aria-hidden", "true");
+  if (authOverlay) {
+    authOverlay.classList.remove("open", "active");
+    authOverlay.classList.add("hidden");
+    authOverlay.setAttribute("aria-hidden", "true");
+  }
+  if (authModal) {
+    authModal.classList.remove("active");
+    authModal.classList.add("hidden");
+  }
+
   document.body.style.overflow = "";
 }
 
@@ -95,9 +116,19 @@ function setAlt(show, text) {
 }
 
 function renderStepper() {
+  if (!authStepper) return;
+
+  // No stepper for login
+  if (state.mode === "login") {
+    authStepper.innerHTML = "";
+    authStepper.style.display = "none";
+    return;
+  }
+
+  authStepper.style.display = "";
+
   const flow = getFlow();
   const activeIndex = state.step;
-  if (!authStepper) return;
 
   authStepper.innerHTML = "";
   flow.forEach((s, idx) => {
@@ -187,50 +218,134 @@ function switchMethod() {
 }
 
 function renderLoginStep(def) {
-  if (authTitle) authTitle.textContent = "Log in";
-  if (authSubtitle) authSubtitle.textContent = "Prefilled — just hit Sign in.";
+  // Visually, we don't show a title/subtitle in this design
+  if (authTitle) authTitle.textContent = "";
+  if (authSubtitle) authSubtitle.textContent = "";
 
-  const form = document.createElement("div");
-  form.className = "form";
+  // Hide the bottom Semantic actions row for login
+  if (authActions) authActions.style.display = "none";
 
-  form.appendChild(
-    field("Email", "email", state.data.loginEmail, (v) => (state.data.loginEmail = v), {
-      placeholder: "name@example.com",
-      autocomplete: "email",
-      onEnter: nextStep
-    })
-  );
+  if (!authContent) return;
 
-  form.appendChild(
-    field("Password", "password", state.data.loginPassword, (v) => (state.data.loginPassword = v), {
-      placeholder: "••••••••",
-      autocomplete: "current-password",
-      onEnter: nextStep
-    })
-  );
+  authContent.innerHTML = "";
 
-  const hint = document.createElement("div");
-  hint.className = "hint";
-  hint.textContent = "Prototype only — no real auth.";
-  form.appendChild(hint);
+  const wrapper = document.createElement("div");
+  wrapper.className =
+      "w-full max-w-[420px] mx-auto flex flex-col items-stretch gap-3 py-8";
 
-  if (authContent) {
-    authContent.innerHTML = "";
-    authContent.appendChild(form);
+  // Helper to create the top social buttons
+  function socialButton(iconClasses, label) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className =
+      "w-full flex items-center justify-center gap-3 rounded-full " +
+      "bg-slate-100 text-slate-700 font-semibold py-3 px-6 " +
+      "shadow-[0_2px_6px_rgba(15,23,42,0.15)]";
+
+    const icon = document.createElement("i");
+    icon.className = iconClasses + " text-slate-500";
+    btn.appendChild(icon);
+
+    const span = document.createElement("span");
+    span.textContent = label;
+    btn.appendChild(span);
+
+    return btn;
   }
 
-  setBack(false);
-  setAlt(false);
-  setSecondary("Cancel", true);
-  setPrimary("Sign in", "primary");
+  // Social / SSO buttons
+  wrapper.appendChild(
+    socialButton("fa-solid fa-phone", "Continue with Phone Number")
+  );
+  wrapper.appendChild(
+    socialButton("fa-brands fa-google", "Continue with Google")
+  );
+  wrapper.appendChild(
+    socialButton("fa-brands fa-apple", "Continue with Apple")
+  );
+
+  // Email input
+  const emailWrap = document.createElement("div");
+  emailWrap.className = "mt-4";
+  const emailInput = document.createElement("input");
+  emailInput.type = "email";
+  emailInput.placeholder = "Enter email here";
+  emailInput.value = state.data.loginEmail || "";
+  emailInput.className =
+    "w-full rounded-full border border-slate-200 px-6 py-3 " +
+    "text-[15px] placeholder-slate-400 " +
+    "shadow-[0_2px_6px_rgba(15,23,42,0.08)] " +
+    "focus:outline-none focus:ring-2 focus:ring-[#58cc02]/60 focus:border-[#58cc02]/60";
+  emailInput.autocomplete = "email";
+  emailInput.addEventListener("input", (e) => {
+    state.data.loginEmail = e.target.value;
+  });
+  emailInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") nextStep();
+  });
+  emailWrap.appendChild(emailInput);
+  wrapper.appendChild(emailWrap);
+
+  // Password input
+  const passwordWrap = document.createElement("div");
+  const passwordInput = document.createElement("input");
+  passwordInput.type = "password";
+  passwordInput.placeholder = "Enter password here";
+  passwordInput.value = state.data.loginPassword || "";
+  passwordInput.className =
+    "w-full rounded-full border border-slate-200 px-6 py-3 " +
+    "text-[15px] placeholder-slate-400 " +
+    "shadow-[0_2px_6px_rgba(15,23,42,0.08)] " +
+    "focus:outline-none focus:ring-2 focus:ring-[#58cc02]/60 focus:border-[#58cc02]/60 mt-3";
+  passwordInput.autocomplete = "current-password";
+  passwordInput.addEventListener("input", (e) => {
+    state.data.loginPassword = e.target.value;
+  });
+  passwordInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") nextStep();
+  });
+  passwordWrap.appendChild(passwordInput);
+  wrapper.appendChild(passwordWrap);
+
+  // Green LOGIN button
+  const loginBtn = document.createElement("button");
+  loginBtn.type = "button";
+  loginBtn.textContent = "LOGIN";
+  loginBtn.className =
+    "mt-4 w-full rounded-full bg-[#58cc02] text-white " +
+    "font-extrabold uppercase tracking-[0.08em] py-3 " +
+    "shadow-[0_8px_20px_rgba(0,0,0,0.25)]";
+  loginBtn.addEventListener("click", () => nextStep());
+  wrapper.appendChild(loginBtn);
+
+  // "OR Click here to Sign Up"
+  const footer = document.createElement("div");
+  footer.className = "mt-6 text-center text-slate-400 text-sm";
+  const orText = document.createElement("span");
+  orText.textContent = "OR ";
+  const signupLink = document.createElement("button");
+  signupLink.type = "button";
+  signupLink.className = "text-slate-500 underline font-semibold";
+  signupLink.textContent = "Click here to Sign Up";
+  signupLink.addEventListener("click", () => openAuth("signup"));
+
+  footer.appendChild(orText);
+  footer.appendChild(signupLink);
+  wrapper.appendChild(footer);
+
+  authContent.appendChild(wrapper);
 }
+
 
 function renderSignupStep(def) {
   if (authTitle) authTitle.textContent = "Create account";
   if (authSubtitle) authSubtitle.textContent = "Prototype flow";
 
+  // Show the bottom actions row again for the multi-step signup flow
+  if (authActions) authActions.style.display = "";
+
   const form = document.createElement("div");
-  form.className = "form";
+  form.className = "ui form";
 
   if (def.key === "welcome") {
     const box = document.createElement("div");

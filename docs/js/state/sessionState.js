@@ -7,7 +7,7 @@ export const state = {
     fullName: "Stu Dent",
     displayName: "@thegoatedlearner",
     email: "stuthedude@edu.nsw.au",
-    avatarUrl: "/img/avatar.png"
+    avatarUrl: "../img/avatar.png"
   },
 
   // modal flow state
