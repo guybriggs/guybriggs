@@ -212,7 +212,7 @@ function renderLoginStep(def) {
 
   const wrapper = document.createElement("div");
   wrapper.className =
-      "w-full max-w-[420px] mx-auto flex flex-col items-stretch gap-3 py-8";
+    "w-full max-w-[420px] mx-auto flex flex-col items-stretch gap-3";
 
   // Helper to create the top social buttons
   function socialButton(iconClasses, label) {
@@ -334,7 +334,7 @@ function renderSignupStep(def) {
 
   const wrapper = document.createElement("div");
   wrapper.className =
-    "w-full max-w-[420px] mx-auto flex flex-col items-stretch gap-3 py-10";
+   "w-full max-w-[420px] mx-auto flex flex-col items-stretch gap-3";
 
   // Same social buttons as login
   function socialButton(iconClasses, label) {
@@ -399,21 +399,31 @@ function renderSignupStep(def) {
   continueBtn.addEventListener("click", () => nextStep());
   wrapper.appendChild(continueBtn);
 
-  // Footer: go back to login
+  // Footer: educator sign-up message
   const footer = document.createElement("div");
-  footer.className = "mt-5 text-center text-slate-400 text-sm";
-  const orText = document.createElement("span");
-  orText.textContent = "or ";
-  const loginLink = document.createElement("button");
-  loginLink.type = "button";
-  loginLink.className =
-    "text-slate-500 font-bold tracking-wide cursor-pointer hover:text-slate-600";
-  loginLink.textContent = "login";
-  loginLink.style.textTransform = "none"; // match top-right login (no all caps)
-  loginLink.addEventListener("click", () => openAuth("login"));
+  footer.className =
+    "mt-5 text-center text-[13px] text-slate-400 font-bold tracking-wide";
 
-  footer.appendChild(orText);
-  footer.appendChild(loginLink);
+  const eduText = document.createElement("span");
+  eduText.textContent = "Educator? ";
+
+  const eduLink = document.createElement("a");
+  eduLink.href = "#";
+  eduLink.textContent = "Click here to sign up";
+  // match the style of "Click here to register"
+  eduLink.style.color = "#94a3b8";          // slate-400
+  eduLink.style.fontWeight = "700";
+  eduLink.style.textDecoration = "underline";
+  eduLink.style.cursor = "pointer";
+
+  eduLink.addEventListener("click", (e) => {
+    e.preventDefault();
+    // go to educators page (adjust if your URL is different)
+    window.location.href = "/educators/";
+  });
+
+  footer.appendChild(eduText);
+  footer.appendChild(eduLink);
   wrapper.appendChild(footer);
 
   authContent.appendChild(wrapper);

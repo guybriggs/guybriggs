@@ -180,7 +180,7 @@
       translate-x-[-50%]
     "
   >
-    Play Trial Game
+    Play as Guest
   </button>
 </section>
 
@@ -272,10 +272,10 @@
       aria-hidden="true"
     >
       <div
-        class="ui modal transition hidden
-              max-w-[580px] w-[90%] bg-white rounded-[1.75rem] shadow-xl"
-        role="document"
-      >
+  class="ui modal transition hidden
+        w-[520px] h-[500px] bg-white rounded-[1.75rem] shadow-xl flex flex-col"
+  role="document"
+>
         <div
             class="header flex items-start justify-between px-6 pt-8 pb-0 border-none bg-transparent"
           >
@@ -294,9 +294,12 @@
             </button>
           </div>
 
-        <div class="content !px-6 !pt-4 !pb-10">
+        <div class="content flex-1 flex flex-col">
           <div class="ui steps" id="authStepper"></div>
-          <div id="authContent"></div>
+          <div
+            id="authContent"
+            class="flex-1 flex items-center justify-center"
+          ></div>
         </div>
 
         <div class="actions" id="authActions">
