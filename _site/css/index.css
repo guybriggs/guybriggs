@@ -1,0 +1,880 @@
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto", "Oxygen",
+    "Ubuntu", "Cantarell", "Fira Sans", "Droid Sans", "Helvetica Neue",
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* When the page has the fixed menu visible, add some spacer margin */
+#root > .fixed.menu + .container {
+  margin-top: 5em;
+  margin-bottom: 6em;
+}
+
+#root > .close-btn-large + .container {
+  margin-top: 4.5em;
+  margin-bottom: 3em;
+}
+
+/* Fix spacing for navigation buttons below fixed header - only when ebook nav is not visible */
+.ebook-content .navigation-buttons {
+  margin-top: 1rem;
+}
+
+/* Add extra top margin only when the ebook nav is not shown */
+.mobile-view .ebook-content .navigation-buttons {
+  margin-top: 5rem;
+}
+
+code {
+  font-family: source-code-pro, Menlo, Monaco, Consolas, "Courier New",
+    monospace;
+}
+
+.medium-editor-element {
+  padding: 5px;
+}
+
+.mathquill-editor-field {
+  text-align: center;
+  display: block !important;
+  font-size: 2rem !important;
+  border-color: rgba(0, 0, 0, 0.1) !important;
+  padding: 5px;
+}
+
+.text-muted {
+  opacity: 0.5;
+}
+
+.question-body {
+  font-size: 1.2em;
+}
+
+.editor-dragged-item {
+  font-size: 1.2em;
+}
+
+/* .question-body .ui.list {
+  font-size: 1.2em;
+} */
+
+.question-body.player .ui.mcq-answers .ui.checkbox {
+  display: block;
+  padding: 3px;
+  border: 1px solid transparent;
+}
+
+.question-body.player .ui.mcq-answers .ui.checkbox label {
+  font-size: 1.2em;
+}
+
+.question-body.player .ui.mcq-answers .ui.checkbox:hover, .question-body.player .ui.mcq-answers .ui.checkbox:active  {
+  background-color: #fee;
+}
+
+.question-body.player .ui.mcq-answers .ui.checkbox.checked  {
+  border: 1px solid red;
+}
+
+.question-body > * {
+  margin-top: 1rem;
+}
+
+.edit-in-place {
+  flex-grow: 1;
+  /* align-items: center; */
+}
+
+/* .edit-in-place > .ui.input {
+  font-weight: 700 !important;
+} */
+
+.edit-in-place > .ui.input > input {
+  border: 1px solid transparent;
+  font-weight: 700;
+}
+
+.edit-in-place > .ui.input > input:hover, .edit-in-place > .ui.input > input:focus {
+  border: 1px solid rgba(34,36,38,.15);
+}
+
+.ui.message.block-editor-item {
+  background-color: #fff;
+  border-radius: 0;
+  box-shadow: none;
+  padding-top: 0.3em;
+  padding-bottom: 0.4em;
+  /* padding-left: 0; */
+  /* border-left: 1.5em solid rgba(34,36,38,.22); */
+}
+
+/* .ui.message.block-editor-item > .close.icon {
+  display: none;
+} */
+
+/* .ui.message.block-editor-item:hover > .close.icon,
+.ui.message.block-editor-item:focus > .close.icon {
+  display: block;
+} */
+
+.ui.message.block-editor-item > .close.icon {
+  opacity: 0.3;
+  top: 0.15em;
+  right: 0.25em;
+  z-index: 1001; /* ensure button isn't masked by other elements (namely grid columns) */
+}
+
+.ui.message.block-editor-item > .drag-handle {
+  cursor: grab;
+  position: absolute;
+  margin: 0;
+  top: 0.55em;
+  left: -0.25em;
+  width: 2em;
+  height: 2.5em;
+  opacity: 0.3;
+  color: black;
+  z-index: 1001; /* ensure handle isn't masked by other elements (namely grid columns) */
+  /* transition: opacity .1s ease */
+}
+
+.ui.message.block-editor-item > .drag-handle:hover {
+  opacity: 1;
+}
+
+.answer-editor-item .ui.checkbox > label {
+  font-size: 0.8rem;
+  padding-left: 0rem !important;
+  padding-top: 1.5rem !important;
+  opacity: 0.7 !important;
+}
+
+.answer-editor-item .ui.checkbox.checked > label {
+  opacity: 1 !important;
+}
+
+.field-invalid {
+  border: 2px solid #ffeaee;
+}
+
+button.as-link {
+  background: none!important;
+  border: none;
+  padding: 0!important;
+  /*optional*/
+  font-family: arial, sans-serif;
+  /*input has OS specific font-family*/
+  color: #069;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.question-list button {
+  z-index: 1; /* ensure buttons aren't masked by other elements / labels */
+}
+
+body .close-btn-large {
+  cursor: pointer;
+  position: absolute;
+  top: 1rem;
+  right: 1.5rem;
+  z-index: 1;
+  opacity: .6;
+  font-size: 2rem;
+  width: 3rem;
+  height: 3rem;
+  padding: .625rem 0 0 0;
+}
+
+/* For LinkButton component */
+.ui.button.basic.link, .ui.button.basic.link:hover, .ui.button.basic.link:focus {
+  box-shadow: 0 0 !important;
+  text-decoration: none;
+  padding: 0;
+}
+
+.ui.button.basic.link:hover {
+  box-shadow: 0 0 !important;
+  text-decoration: underline;
+}
+
+.rendered-markdown {
+  margin-bottom: 1rem;
+}
+
+.rendered-markdown.diff s {
+  background-color: #fd9999;
+}
+
+/* Workaround for Semantic CSS quirk where input error styling is overriden */
+.ui.input.error>input {
+  background-color: #fff6f6 !important;
+  border-color: #e0b4b4 !important;
+  color: #9f3a38 !important;
+  box-shadow: none !important;
+}
+
+/* block content */
+
+.block-content .box {
+  margin: 20px 0;
+  padding: 12px;
+  background-color: #F0F0F0;
+  border-style: solid;
+  border-color: lightgray;
+  border-width: 1px;
+}
+
+.block-content .box .box {
+  background-color: #F6F6F6;
+}
+
+.block-content .defnotes-list {
+  list-style: none;
+  /* padding: 0; */
+}
+
+.block-content .defnotes-list > .footnote-item > a {
+  display: none;
+}
+
+/* .block-content .ui.embed + figcaption {
+  margin-top: 1rem;
+} */
+
+.block-content .ui.embed {
+  margin-bottom: 1rem;
+}
+
+.block-content p {
+  line-height: 1.6rem;
+}
+
+.block-content .defnotes {
+  margin-bottom: 1rem;
+}
+
+.block-content .menu-button {
+  width:200px;
+}
+
+/*.block-content .menu-button {
+  width:200px;
+  text-align: center;
+  border-style: solid;
+  border-color: #2185D0;
+  background-color: #2185D0;
+}
+
+.block-content .menu-button a {
+  color: white;
+}
+
+.block-content .menu-button:hover {
+  background-color: #1678c2;
+}*/
+
+.comments-text {
+  border: 1px solid #ddd;
+  padding: 0.5rem;
+}
+
+.ebook-nav .ui.menu {
+  box-shadow: none !important;
+  border: none !important;
+}
+
+#chat-icon {
+  position: fixed;
+  bottom: 50px;
+  right: 30px;
+}
+
+#chat-window {
+  position: fixed;
+  width: 350px;
+  height: 500px;
+  bottom: 70px;
+  right: 30px;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  transition: .3s ease-in-out;
+  padding: 0;
+  overflow: hidden;
+}
+
+#chat-window > * {
+  flex: 0 0 auto;
+}
+
+#chat-header {
+  /* display: flex; */
+}
+
+#chat-header.small {
+  /* min-height: 75px; */
+  border-bottom: 1px solid #eee;
+  padding: 0.5rem;
+}
+
+#chat-header.large {
+  min-height: 50px;
+}
+
+#chat-header > .header {
+  display: table;
+}
+
+#chat-header > .header > img,  #chat-header > .header > .content {
+  /* display: table-cell; */
+}
+
+#chat-body {
+  height: 100%;
+  overflow-y: auto;
+  padding: 1rem;
+}
+
+#chat-footer {
+  border-top: 1px solid #eee;
+  min-height: 55x;
+  /* display: flex; */
+  /* position: relative; */
+  /* bottom: 0; */
+  padding: 0.5rem 1rem 0.5rem;
+}
+
+#chat-footer > div {
+  width: 100%;
+}
+
+/* Force text box in chat window to take up full remaining width */
+#chat-footer .remirror-theme {
+  flex-grow: 1;
+}
+.add-comment-wrapper {
+  width: 100%;
+}
+.add-comment-wrapper .remirror-theme {
+  flex-grow: 1;
+}
+
+#chat-body {
+  /* height: 100%; */
+  /* overflow-y: hidden; */
+  padding: 0.5rem;
+  padding-top: 0 !important;
+  /* display: flex; */
+  /* overflow: hidden; */
+  /* flex-direction: column; */
+  /* justify-content: space-between; */
+  /* flex-grow: 5; */
+  /* make this container stretchy */
+  flex: 1 1 auto;
+  width: 100%;
+}
+
+#chat-body > * {
+  /* set all direct children to NOT flex */
+  flex: 0 0 auto;
+}
+
+/* A wrapper div created by the tab component */
+#chat-body.with-tabs > div {
+  flex: 1 1 auto !important;
+  /* display: flex; */
+  flex-direction: column;
+}
+
+#chat-body .tab-title {
+  margin: 0.25rem;
+  margin-top: 0;
+}
+
+/* #chat-body > div {
+  height: 100%;
+} */
+
+#chat-body .chat-body-inner {
+  /* display: none; */
+  /* height: 100%; */
+  /* overflow-y: scroll;
+  padding: 0.5rem;
+  padding-top: 0 !important; */
+  flex: 1 1 auto !important;
+  overflow-y: auto;
+}
+
+table.selectable tr {
+  cursor: pointer;
+}
+table.selectable tr.unselectable {
+  cursor: default;
+}
+
+.ui.selectable.table tbody tr.unselectable:hover {
+  background: none !important;
+}
+
+.comments-text {
+  /* stop text box from collapsing when losing focus */
+  min-height: 2.5rem;
+}
+
+.chat-window-textbox {
+  width: 100%;
+  max-width: 275px;
+  margin-right: 5px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.chat-window-textbox.disabled {
+}
+
+.chat-history .comment {
+  padding: 0.5em !important;
+}
+
+.chat-history.large {
+  max-width: none !important;
+}
+
+.chat-history .comment.system {
+  background-color: #ffea768f;
+}
+
+.chat-history .comment.owned {
+  background-color: #cce6ff;
+}
+
+.chat-history .comment.unread {
+  background-color: #ffcccc;
+}
+
+.monospace {
+  font-family:monospace;
+}
+
+.course-mark-formula-editor .CodeMirror-wrap {
+  height: 200px;
+}
+
+.yaml-editor .CodeMirror-wrap {
+  height: 500px;
+}
+
+.ui.comments.help-requests > .comment {
+  border: 1px solid #eee;
+  background-color: lightyellow;
+  padding: 0.5rem;
+}
+
+.leaderboard-config-editor .CodeMirror-wrap {
+  height: 200px;
+}
+
+.ui.segment.link:hover {
+  cursor: pointer;
+}
+
+img.with-fullsize-popup:hover {
+  cursor: pointer
+}
+
+.remirror-floating-popover {
+  z-index: 1
+}
+
+.remirror-theme {
+  /* override remirror theme */
+  --rmr-color-primary: #2185d0;
+}
+
+/* Add a micro statistics size! */
+.ui.micro.statistic>.value, .ui.micro.statistics .statistic>.value {
+  font-size: 0.9rem!important;
+}
+
+/* Remove permanent scrollbar from remirror comment editor */
+.comments .remirror-editor.ProseMirror, #chat-footer .remirror-editor.ProseMirror {
+  overflow-y: auto !important;
+  text-align: left;
+}
+
+/* When chat messages are disabled, gray out the box */
+#chat-footer .remirror-editor[contenteditable=false] {
+  background-color: #eee;
+}
+
+/* reduce default min height of remirror comment editor, as well as tweak the border outline */
+.comments .remirror-theme .ProseMirror, #chat-footer .remirror-theme .ProseMirror {
+  min-height: 2.5rem !important;
+  max-height: 300px;
+  box-shadow: none;
+  outline: 1px solid #ddd;
+  padding: 0.75rem;
+}
+
+/* Specific tweaks for text editor in chat window */
+#chat-footer .remirror-theme .ProseMirror {
+  min-height: 3rem !important;
+  margin-right: 0.5rem;
+  max-height: 200px;
+}
+#chat-footer .remirror-editor-wrapper {
+  padding-top: 0 !important;
+}
+
+
+/* style markdown quoted text */
+.block-content blockquote {
+  border-left: 3px solid #ddd;
+  margin-left: 0;
+  margin-right: 0;
+  padding-left: 10px;
+  font-style: italic;
+}
+
+dt {
+  font-weight: 700;
+}
+
+.chat-admin-result-column {
+  /* max-height: 500px; */
+  /* overflow: auto; */
+}
+
+@media print
+{
+    .no-print, .no-print *
+    {
+        display: none !important;
+    }
+}
+
+/* semantic insists on FormInput's inside a Form being full-width for some reason */
+.survey-modal .survey-input .ui.input {
+  width: auto !important;
+}
+
+/* make all text bigger in the survey modal */
+.survey-modal {
+  font-size: 1.2rem !important;
+}
+
+.survey-modal .ui.form {
+  font-size: 1.2rem !important;
+}
+
+.survey-modal .ui.checkbox label {
+  font-size: 1.2rem !important;
+}
+
+/* Overrides for the survey modal with background image option */
+.ui.page.modals:has(> .survey-modal-bg) {
+  /* background-color: rgba(255, 255, 0, 0.5) !important; */
+  background: url('/src/assets/survey-bg.webp');
+  background-size: cover;
+  background-position: center center;
+}
+.survey-modal-bg.mobile {
+  width: 85% !important;
+}
+.survey-modal-bg, .survey-modal-bg > .header, .survey-modal-bg > .content, .survey-modal-bg > .actions {
+  background-color: rgba(255, 255, 255, 0.65) !important;
+}
+.survey-modal-bg table {
+  background: transparent !important;
+}
+.survey-modal-bg table thead th {
+  background: transparent !important;
+}
+/* End survey modal with background image option overrides */
+
+.poll-banner {
+  /* Override default margin */
+  margin-bottom: 1em !important;
+}
+
+.poll-banner h4 {
+  text-align: center;
+  margin-bottom: 0;
+}
+
+/* For chat window - override the default comment width when we're in wide view */
+.ui.minimal.comments.wide {
+  max-width: none !important;
+}
+
+/* Display reference numbering to the right of the equation */
+.katex-block .eqno {
+  float: right;
+  opacity: 0.25;
+}
+
+.json-editor .CodeMirror-wrap {
+  height: 500px;
+}
+
+.json-editor.json-editor-small .CodeMirror-wrap {
+  height: 200px;
+}
+
+/* To properly wrap text in a pre tag */
+pre {
+  white-space: pre-wrap;       /* Since CSS 2.1 */
+  white-space: -moz-pre-wrap;  /* Mozilla, since 1999 */
+  white-space: -pre-wrap;      /* Opera 4-6 */
+  white-space: -o-pre-wrap;    /* Opera 7 */
+  word-wrap: break-word;       /* Internet Explorer 5.5+ */
+}
+
+.embedded-chat-container {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+}
+
+.embedded-chat-inner {
+  max-width: 768px;
+  width: 100%;
+}
+
+@media only screen and (min-width: 768px) {
+  .embedded-chat-inner {
+    /* Keep chat view width resticted */
+    width: 768px;
+  }
+}
+
+.ui.divider {
+  /* Ensure dividers take up full width when using flex */
+  width: 100%
+}
+
+.chapter-progress-block + .chapter-progress-block {
+  margin-top: 1rem;
+}
+
+/* sticks 85 px below top bar, sits under portals (z-index 1000) */
+/* removed sticky */
+.ebook-nav-column,
+.ebook-nav-floater {
+  /*position: sticky;*/
+  top: 85px;
+  align-self: flex-start;   /* necessary in flex/grid layouts */
+  z-index: 5;
+}
+
+/* optional: width & animation for smoother collapse */
+.ebook-nav-column {
+  transition: width .25s ease;
+}
+
+/* sticks 85 px below top bar, sits under portals (z-index 1000) */
+/* removed sticky */
+.ebook-nav-column,
+.ebook-nav-floater {
+  /*position: sticky;*/
+  top: 85px;
+  align-self: flex-start;   /* necessary in flex/grid layouts */
+  z-index: 5;
+}
+
+/* optional: width & animation for smoother collapse */
+.ebook-nav-column {
+  transition: width .25s ease;
+}
+
+figure {
+  text-align: center;
+}
+
+/* gamewidget.js (CSS extract) */
+
+/* Container states */
+.gw-container {
+  position: relative;
+  width: 100%;
+  height: auto;
+  margin: auto;
+  background-color: transparent;
+}
+
+.gw-container--fullscreen {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 9998;
+  margin: 0;
+  background: #fff; /* letterbox bg */
+}
+
+/* Outline killer (covers iframe outline artifacts) */
+.gw-outline-killer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  border: 3px solid #fff;
+  z-index: 99;
+  pointer-events: none;
+}
+
+.gw-container--fullscreen .gw-outline-killer {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 100vw;
+  height: calc(100vw * 9 / 16);
+  max-width: calc(100vh * 16 / 9);
+  max-height: 100vh;
+}
+
+/* Stage wrapper – enforces 16:9 */
+.gw-stage {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  background: transparent;
+  overflow: hidden;
+}
+
+.gw-stage--fullscreen {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 100vw;
+  height: calc(100vw * 9 / 16);
+  max-width: calc(100vh * 16 / 9);
+  max-height: 100vh;
+  background: #fff;
+  overflow: hidden;
+}
+
+/* Iframe */
+.gw-iframe {
+  width: 100%;
+  height: 100%;
+  border: none;
+  outline: none;
+  background: transparent;
+}
+
+.gw-iframe--fs {
+  background: #fff;
+}
+
+/* Loading overlay (used both inline and editor-FS placeholder) */
+.gw-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  width: 100%;
+  height: 100%;
+}
+
+/* Fullscreen toggle button anchored to stage */
+.gw-fs-toggle {
+  position: absolute !important; /* override SUI */
+  top: 10px;
+  right: 10px;
+  z-index: 99; /* fixed Header on mobile is 101 by default */
+  opacity: 0.7;
+}
+
+/* --- Teaser state --- */
+.gw-teaser {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  background: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border-radius: 1em;
+}
+
+.gw-teaser-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 1em;
+}
+
+.gw-teaser-overlay {
+  position: absolute;
+  inset: 0;
+  border-radius: 1em;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.gw-teaser-cta {
+  background: transparent;
+  border-radius: 2em;
+  padding: 1em .5em .5em 1em;
+}
+
+/* --- Editor fullscreen DOM (appended to <body>) --- */
+.gw-fs {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 9999;
+  background: #fff;
+}
+
+.gw-fs .gw-stage {
+  /* ensure nested stage fills FS container */
+}
+
+.gw-fs-close {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 10000;
+  background-color: rgba(255, 255, 255, 0.7);
+  border: none;
+  border-radius: 50%;
+  width: 30px;
+  height: 30px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* --- Editor placeholder while in FS --- */
+.gw-editor-placeholder-wrap {
+  aspect-ratio: 16 / 9;
+}
+
+.gw-editor-placeholder {
+  width: 100%;
+  height: 100%;
+  aspect-ratio: 16 / 9;
+  background: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  padding: 20px;
+  text-align: center;
+}
