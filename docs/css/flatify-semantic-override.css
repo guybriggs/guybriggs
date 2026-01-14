@@ -1498,16 +1498,33 @@ svg .idle-anim-back  { animation: idleAnimBack 3.2s ease-in-out infinite; transf
   position: absolute;
   top: 125%;
   left: 50%;
-  transform: translateX(-50%);
+  transform: translateX(-50%) translateY(10px) scale(0.95);
   opacity: 0;
   white-space: nowrap;
   font-weight: 700;
   z-index: 9;
+  transition: visibility 0s linear 150ms;
 }
 
 .flatify-tooltip:hover .flatify-tooltiptext {
   visibility: visible;
   opacity: 1;
+  animation: flatify-bounce 300ms ease-out forwards;
+  transition-delay: 0s;
+}
+
+@keyframes flatify-bounce {
+  0% {
+    transform: translateX(-50%) translateY(10px) scale(0.95);
+    opacity: 0;
+  }
+  60% {
+    transform: translateX(-50%) translateY(-2px) scale(1.02);
+    opacity: 1;
+  }
+  100% {
+    transform: translateX(-50%) translateY(0) scale(1);
+  }
 }
 
 .ac-box-shadow {

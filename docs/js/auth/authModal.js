@@ -41,7 +41,6 @@ function currentStepDef() {
 }
 
 function openAuth(mode) {
-  hardHideMenu(dropdownEls.navMenu, dropdownEls.navBrandBtn);
   hardHideMenu(dropdownEls.userMenu, dropdownEls.avatarBtn);
 
   state.mode = mode;

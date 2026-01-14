@@ -18,7 +18,6 @@ export function setLoggedInUI(isLoggedIn) {
     if (headerAvatarImg) headerAvatarImg.src = state.user.avatarUrl;
 
     hardHideMenu(dropdownEls.userMenu, dropdownEls.avatarBtn);
-    hardHideMenu(dropdownEls.navMenu, dropdownEls.navBrandBtn);
   } else {
     userDropdown?.classList.add("hidden");
     authArea?.classList.remove("hidden");

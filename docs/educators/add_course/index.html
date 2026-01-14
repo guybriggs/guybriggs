@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>News</title>
+    <title>Add New Course</title>
 
     <!-- Nunito -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -18,7 +18,7 @@
     <link rel="stylesheet" href="/guybriggs/tailwind/tailwind.css" />
   </head>
 
-  <body data-page="news">
+  <body data-page="educators">
 
     <!-- HEADER (Semantic menu) -->
     <header
@@ -127,37 +127,194 @@
     <!-- PAGE CONTENT -->
     <main class="ui">
       
-<div class="pt-[64px]"></div>
+<!-- Make Flatify elements pill-shaped on this page only -->
+<div class="pt-[96px]" style="--flatify__border-radius: 999px;"></div>
 
-<!-- Grey wave -->
-<div class="fixed left-0 right-0 bottom-0 grayscale opacity-25">
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 200 1440 100">
-    <path fill="#a5ca2f" fillOpacity="1" d="M0,256L80,245.3C160,235,320,213,480,213.3C640,213,800,235,960,250.7C1120,267,1280,277,1360,282.7L1440,288L1440,320L1360,320C1280,320,1120,320,960,320C800,320,640,320,480,320C320,320,160,320,80,320L0,320Z"></path>
-    </svg>
-    <div class="h-[100px] bg-[#a5ca2f]"></div>
-</div>
+<section class="px-6" style="--flatify__border-radius: 999px;">
+  <div class="mx-auto w-full max-w-[1200px]">
+    <!-- Top bar -->
+    <div class="flex items-center gap-6">
+      <a
+        href="/guybriggs/educators/"
+        class="ui basic button"
+        style="--flatify__border-radius: 999px;"
+      >
+        <i class="fa-solid fa-arrow-left mr-3"></i>
+        Back
+      </a>
 
-<div class="ui container ebook-content" style="">
-  <div>
-    <div class="ui relaxed grid" style="margin-top: 1rem">
-      <div class="centered row">
-        <div class="eleven wide column">
-          <div class="block-content">
-            <div class="flatify-overlay-outer">
-              <div class="ui icon positive message">
-                <i aria-hidden="true" class="fas fa-star fa-3x opacity-75 mr-4"></i>
-                <div class="content">
-                  <div class="header">News on this page!</div>
-                  <p>Yes.</p>
-                </div>
-              </div>
+      <h1 class="text-xl font-black tracking-wide text-slate-800 uppercase">
+        Add New Course
+      </h1>
+    </div>
+
+    <!-- Two column layout -->
+    <div class="mt-6 grid grid-cols-1 gap-10 lg:grid-cols-[520px_1fr] lg:items-start">
+      <!-- Left: form (IMPORTANT: ui form so Flatify context applies) -->
+      <form class="ui form space-y-4">
+        <!-- Course -->
+        <div class="grid grid-cols-[140px_1fr] items-center gap-4">
+          <label for="courseCode" class="form-label inline text-lg font-black text-slate-800">
+            Course:
+          </label>
+
+          <div class="input-wrapper w-full">
+            <input
+              id="courseCode"
+              type="text"
+              value=""
+              class="w-full text-center"
+              placeholder="Enter course code"
+            />
+          </div>
+        </div>
+
+        <!-- Warning -->
+        <div class="pl-[140px] -mt-2 text-red-500 font-black">
+          Warning: Course Code must be unique
+        </div>
+
+        <!-- Name -->
+        <div class="grid grid-cols-[140px_1fr] items-center gap-4">
+          <label for="courseName" class="form-label inline text-lg font-black text-slate-800">
+            Name:
+          </label>
+
+          <div class="input-wrapper w-full">
+            <input
+              id="courseName"
+              type="text"
+              value=""
+              class="w-full text-center"
+              placeholder="Enter course name"
+            />
+          </div>
+        </div>
+
+        <!-- Start Date -->
+        <div class="grid grid-cols-[140px_1fr] items-center gap-4">
+          <label class="form-label inline text-lg font-black text-slate-800">
+            Start Date:
+          </label>
+
+          <div class="flex gap-3">
+            <div class="input-wrapper">
+              <input class="w-24 text-center" placeholder="Day" />
+            </div>
+            <div class="input-wrapper">
+              <input class="w-28 text-center" placeholder="Month" />
+            </div>
+            <div class="input-wrapper">
+              <input class="w-28 text-center" placeholder="Year" />
             </div>
           </div>
         </div>
-      </div>
-    </div>
+
+        <!-- End Date -->
+        <div class="grid grid-cols-[140px_1fr] items-center gap-4">
+          <label class="form-label inline text-lg font-black text-slate-800">
+            End Date:
+          </label>
+
+          <div class="flex gap-3">
+            <div class="input-wrapper">
+              <input class="w-24 text-center" placeholder="Day" />
+            </div>
+            <div class="input-wrapper">
+              <input class="w-28 text-center" placeholder="Month" />
+            </div>
+            <div class="input-wrapper">
+              <input class="w-28 text-center" placeholder="Year" />
+            </div>
+          </div>
+        </div>
+
+        <!-- Default Tutorial -->
+        <div class="grid grid-cols-[140px_1fr] items-center gap-4">
+          <label for="defaultTutorial" class="form-label inline text-lg font-black text-slate-800">
+            Default Tutorial:
+          </label>
+
+          <div class="input-wrapper w-full">
+            <input
+              id="defaultTutorial"
+              type="text"
+              value=""
+              class="w-full text-center"
+              placeholder="Enter default tutorial"
+            />
+          </div>
+        </div>
+
+        <!-- Default Stream -->
+        <div class="grid grid-cols-[140px_1fr] items-center gap-4">
+          <label for="defaultStream" class="form-label inline text-lg font-black text-slate-800">
+            Default Stream:
+          </label>
+
+          <div class="input-wrapper w-full">
+            <input
+              id="defaultStream"
+              type="text"
+              value=""
+              class="w-full text-center"
+              placeholder="Enter default stream"
+            />
+          </div>
+        </div>
+
+        <!-- Is Active toggle (static placeholder) -->
+        <div class="grid grid-cols-[140px_1fr] items-center gap-4 pt-2">
+          <label class="text-lg font-black text-slate-800">Is Active:</label>
+          <div class="relative h-7 w-14 rounded-full bg-slate-200">
+            <span class="absolute left-1 top-1 h-5 w-5 rounded-full bg-white shadow"></span>
+          </div>
+        </div>
+      </form>
+
+      <!-- Right: preview / image placeholder -->
+      <div>
+        <div class="flex items-center justify-end gap-4">
+        <div class="text-lg font-black text-slate-800">Textbook Template:</div>
+
+        <!-- Flatify / Semantic UI dropdown -->
+<div class="ui selection dropdown min-w-[260px]" id="textbookTemplate">
+  <input type="hidden" name="textbookTemplate" value="Microeconomics 2025" />
+  <i class="dropdown icon"></i>
+  <div class="text">Microeconomics 2025</div>
+
+  <div class="menu">
+    <div class="item" data-value="Macroeconomics 2025">Macroeconomics 2025</div>
+    <div class="item" data-value="Microeconomics 2025">Microeconomics 2025</div>
+    <div class="item" data-value="Stats">Stats</div>
+    <div class="item" data-value="Blank">Blank</div>
   </div>
 </div>
+      </div>
+
+        <!-- screenshot (no border/card) -->
+        <div class="mt-4">
+          <img
+            src="/guybriggs/img/academia_screenshot.png"
+            alt="Academia screenshot"
+            class="w-full rounded-2xl object-cover aspect-[16/9]"
+          />
+        </div>
+      </div>
+    </div>
+
+    <!-- Bottom create button -->
+    <div class="mt-10 flex justify-center pb-10">
+      <button
+        type="button"
+        class="h-14 w-[340px] rounded-full bg-emerald-400 text-white font-black uppercase tracking-wide shadow-sm hover:brightness-95"
+      >
+        Create
+      </button>
+    </div>
+  </div>
+</section>
+
     </main>
 
     <!-- AUTH MODAL (Semantic modal structure) -->

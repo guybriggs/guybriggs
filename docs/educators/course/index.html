@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>News</title>
+    <title>Course</title>
 
     <!-- Nunito -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -18,7 +18,7 @@
     <link rel="stylesheet" href="/guybriggs/tailwind/tailwind.css" />
   </head>
 
-  <body data-page="news">
+  <body data-page="educators">
 
     <!-- HEADER (Semantic menu) -->
     <header
@@ -127,37 +127,417 @@
     <!-- PAGE CONTENT -->
     <main class="ui">
       
-<div class="pt-[64px]"></div>
+<!-- pill radius for inputs/buttons on this page -->
+<div class="pt-[96px]" style="--flatify__border-radius: 999px;"></div>
 
-<!-- Grey wave -->
-<div class="fixed left-0 right-0 bottom-0 grayscale opacity-25">
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 200 1440 100">
-    <path fill="#a5ca2f" fillOpacity="1" d="M0,256L80,245.3C160,235,320,213,480,213.3C640,213,800,235,960,250.7C1120,267,1280,277,1360,282.7L1440,288L1440,320L1360,320C1280,320,1120,320,960,320C800,320,640,320,480,320C320,320,160,320,80,320L0,320Z"></path>
-    </svg>
-    <div class="h-[100px] bg-[#a5ca2f]"></div>
-</div>
+<section class="px-6" style="--flatify__border-radius: 999px;">
+  <div class="mx-auto w-full max-w-[1200px]">
 
-<div class="ui container ebook-content" style="">
-  <div>
-    <div class="ui relaxed grid" style="margin-top: 1rem">
-      <div class="centered row">
-        <div class="eleven wide column">
-          <div class="block-content">
-            <div class="flatify-overlay-outer">
-              <div class="ui icon positive message">
-                <i aria-hidden="true" class="fas fa-star fa-3x opacity-75 mr-4"></i>
-                <div class="content">
-                  <div class="header">News on this page!</div>
-                  <p>Yes.</p>
-                </div>
-              </div>
-            </div>
+    <!-- Top bar -->
+    <div class="flex items-center gap-6">
+      <!-- Back (Flatify "simple button" example) -->
+      <a href="/guybriggs/educators/" class="button style-light">
+        ← Back
+      </a>
+
+      <h1 class="text-xl font-black tracking-wide text-slate-800">
+        Course: <span id="courseCodeHeader">—</span>
+      </h1>
+    </div>
+
+    <!-- Form block -->
+    <div class="mt-6">
+      <form class="ui form space-y-3">
+
+        <!-- Name -->
+        <div class="flex items-center gap-4">
+          <label class="w-[120px] font-black text-slate-800">Name:</label>
+          <div class="flex-1">
+            <input id="courseName" type="text" placeholder="Course name" />
           </div>
         </div>
+
+        <!-- Start Date -->
+        <div class="flex items-center gap-4">
+          <label class="w-[120px] font-black text-slate-800">Start Date:</label>
+          <div class="flex gap-3">
+            <input class="w-24 text-center" placeholder="Day" />
+            <input class="w-28 text-center" placeholder="Month" />
+            <input class="w-28 text-center" placeholder="Year" />
+          </div>
+        </div>
+
+        <!-- End Date -->
+        <div class="flex items-center gap-4">
+          <label class="w-[120px] font-black text-slate-800">End Date:</label>
+          <div class="flex gap-3">
+            <input class="w-24 text-center" placeholder="Day" />
+            <input class="w-28 text-center" placeholder="Month" />
+            <input class="w-28 text-center" placeholder="Year" />
+          </div>
+        </div>
+
+        <!-- Is Active -->
+        <div class="flex items-center gap-4 pt-1">
+          <label class="w-[120px] font-black text-slate-800">Is Active:</label>
+          <div class="ui toggle checkbox">
+            <input id="isActive" type="checkbox" />
+            <label></label>
+          </div>
+        </div>
+
+        <!-- Enable multiple streams -->
+        <div class="flex items-center gap-4 pt-1">
+          <label class="w-[120px] font-black text-slate-800">Enable multiple streams:</label>
+          <div class="ui toggle checkbox">
+            <input id="multiStreams" type="checkbox" />
+            <label></label>
+          </div>
+        </div>
+
+      </form>
+    </div>
+
+    <!-- Tutorial groups -->
+    <div class="mt-10">
+      <h2 class="text-xl font-black text-slate-800 mb-3">Tutorial groups</h2>
+
+      <!-- table wrapper: slightly squarer corners like screenshot -->
+      <div class="overflow-hidden rounded-[18px] bg-white" style="--flatify__border-radius: 18px;">
+        <table class="ui table w-full !m-0" style="border-collapse: separate; border-spacing: 0;">
+          <thead>
+            <tr>
+              <th class="w-[28%] !bg-slate-200/80">Name</th>
+              <th class="w-[23%] !bg-slate-200/80">Tutors</th>
+              <th class="w-[9%] !bg-slate-200/80 text-right"># Students</th>
+              <th class="w-[14%] !bg-slate-200/80">Registration<br />code</th>
+              <th class="w-[11%] !bg-slate-200/80">Approval<br />Status</th>
+              <th class="w-[15%] !bg-slate-200/80 text-center">Actions</th>
+            </tr>
+          </thead>
+
+          <tbody>
+            <!-- Row 1 -->
+            <tr>
+              <td>Bishop Druitt College</td>
+              <td>Bishop Teacher</td>
+              <td class="text-right">0</td>
+              <td>
+                <div class="flex items-center justify-between gap-3">
+                  <span class="font-black text-slate-700">VN7B2</span>
+                  <button type="button" class="ui basic button !p-2" style="--flatify__border-radius: 12px;">
+                    <i class="fa-solid fa-rotate-right"></i>
+                  </button>
+                </div>
+              </td>
+              <td>
+                <span class="inline-flex items-center gap-2 px-4 py-2 font-black text-white"
+                  style="background:#f4b000; border-radius: 12px;">
+                  <i class="fa-regular fa-clock"></i> Pending
+                </span>
+              </td>
+              <td class="text-center">
+                <a
+                class="ui blue button whitespace-nowrap"
+                style="--flatify__border-radius: 12px;"
+                href="/guybriggs/educators/tutorial/?course=ECON1101-S2-UNSW&tutorial=Example%20class"
+                >
+                View details
+                </a>
+              </td>
+            </tr>
+
+            <!-- Row 2 -->
+            <tr>
+              <td>Blacktown Girls High School</td>
+              <td>Carol Teacher</td>
+              <td class="text-right">2</td>
+              <td>
+                <div class="flex items-center justify-between gap-3">
+                  <span class="font-black text-slate-700">Y4D87</span>
+                  <button type="button" class="ui basic button !p-2" style="--flatify__border-radius: 12px;">
+                    <i class="fa-solid fa-rotate-right"></i>
+                  </button>
+                </div>
+              </td>
+              <td>
+                <span class="inline-flex items-center gap-2 px-4 py-2 font-black text-white"
+                  style="background:#f4b000; border-radius: 12px;">
+                  <i class="fa-regular fa-clock"></i> Pending
+                </span>
+              </td>
+              <td class="text-center">
+                <a
+                class="ui blue button whitespace-nowrap"
+                style="--flatify__border-radius: 12px;"
+                href="/guybriggs/educators/tutorial/?course=ECON1101-S2-UNSW&tutorial=Example%20class"
+                >
+                View details
+                </a>
+              </td>
+            </tr>
+
+            <!-- Row 3 -->
+            <tr>
+              <td>Carlingford High School</td>
+              <td>Carly Teacher</td>
+              <td class="text-right">3</td>
+              <td>
+                <div class="flex items-center justify-between gap-3">
+                  <span class="font-black text-slate-700">8RU72</span>
+                  <button type="button" class="ui basic button !p-2" style="--flatify__border-radius: 12px;">
+                    <i class="fa-solid fa-rotate-right"></i>
+                  </button>
+                </div>
+              </td>
+              <td>
+                <span class="inline-flex items-center gap-2 px-4 py-2 font-black text-white"
+                  style="background:#21b140; border-radius: 12px;">
+                  <i class="fa-solid fa-check"></i> Approved
+                </span>
+              </td>
+              <td class="text-center">
+                <a
+                class="ui blue button whitespace-nowrap"
+                style="--flatify__border-radius: 12px;"
+                href="/guybriggs/educators/tutorial/?course=ECON1101-S2-UNSW&tutorial=Example%20class"
+                >
+                View details
+                </a>
+              </td>
+            </tr>
+
+            <!-- Row 4 -->
+            <tr>
+              <td>Corpus Christi College Maroubra</td>
+              <td>hwerher herherherher</td>
+              <td class="text-right">0</td>
+              <td>
+                <div class="flex items-center justify-between gap-3">
+                  <span class="font-black text-slate-700">D2FZH</span>
+                  <button type="button" class="ui basic button !p-2" style="--flatify__border-radius: 12px;">
+                    <i class="fa-solid fa-rotate-right"></i>
+                  </button>
+                </div>
+              </td>
+              <td>
+                <span class="inline-flex items-center gap-2 px-4 py-2 font-black text-white"
+                  style="background:#f4b000; border-radius: 12px;">
+                  <i class="fa-regular fa-clock"></i> Pending
+                </span>
+              </td>
+              <td class="text-center">
+                <a
+                class="ui blue button whitespace-nowrap"
+                style="--flatify__border-radius: 12px;"
+                href="/guybriggs/educators/tutorial/?course=ECON1101-S2-UNSW&tutorial=Example%20class"
+                >
+                View details
+                </a>
+              </td>
+            </tr>
+
+            <!-- Row 5 -->
+            <tr>
+              <td>De La Salle Catholic College, Caringbah</td>
+              <td>Rufus Matthews</td>
+              <td class="text-right">0</td>
+              <td>
+                <div class="flex items-center justify-between gap-3">
+                  <span class="font-black text-slate-700">77KYK</span>
+                  <button type="button" class="ui basic button !p-2" style="--flatify__border-radius: 12px;">
+                    <i class="fa-solid fa-rotate-right"></i>
+                  </button>
+                </div>
+              </td>
+              <td>
+                <span class="inline-flex items-center gap-2 px-4 py-2 font-black text-white"
+                  style="background:#f4b000; border-radius: 12px;">
+                  <i class="fa-regular fa-clock"></i> Pending
+                </span>
+              </td>
+              <td class="text-center">
+                <a
+                class="ui blue button whitespace-nowrap"
+                style="--flatify__border-radius: 12px;"
+                href="/guybriggs/educators/tutorial/?course=ECON1101-S2-UNSW&tutorial=Example%20class"
+                >
+                View details
+                </a>
+              </td>
+            </tr>
+
+            <!-- Row 6 -->
+            <tr>
+              <td>Dundee Beach School</td>
+              <td>Croc Teacher</td>
+              <td class="text-right">0</td>
+              <td>
+                <div class="flex items-center justify-between gap-3">
+                  <span class="font-black text-slate-700">9YHBY</span>
+                  <button type="button" class="ui basic button !p-2" style="--flatify__border-radius: 12px;">
+                    <i class="fa-solid fa-rotate-right"></i>
+                  </button>
+                </div>
+              </td>
+              <td>
+                <span class="inline-flex items-center gap-2 px-4 py-2 font-black text-white"
+                  style="background:#f4b000; border-radius: 12px;">
+                  <i class="fa-regular fa-clock"></i> Pending
+                </span>
+              </td>
+              <td class="text-center">
+                <a
+                class="ui blue button whitespace-nowrap"
+                style="--flatify__border-radius: 12px;"
+                href="/guybriggs/educators/tutorial/?course=ECON1101-S2-UNSW&tutorial=Example%20class"
+                >
+                View details
+                </a>
+              </td>
+            </tr>
+
+            <!-- Row 7 -->
+            <tr>
+              <td>Heathfield High School</td>
+              <td>Heath Teacher</td>
+              <td class="text-right">0</td>
+              <td>
+                <div class="flex items-center justify-between gap-3">
+                  <span class="font-black text-slate-700">L7FJT</span>
+                  <button type="button" class="ui basic button !p-2" style="--flatify__border-radius: 12px;">
+                    <i class="fa-solid fa-rotate-right"></i>
+                  </button>
+                </div>
+              </td>
+              <td>
+                <span class="inline-flex items-center gap-2 px-4 py-2 font-black text-white"
+                  style="background:#f4b000; border-radius: 12px;">
+                  <i class="fa-regular fa-clock"></i> Pending
+                </span>
+              </td>
+              <td class="text-center">
+                <a
+                class="ui blue button whitespace-nowrap"
+                style="--flatify__border-radius: 12px;"
+                href="/guybriggs/educators/tutorial/?course=ECON1101-S2-UNSW&tutorial=Example%20class"
+                >
+                View details
+                </a>
+              </td>
+            </tr>
+
+            <!-- Row 8 -->
+            <tr>
+              <td>Mabel Park State High School</td>
+              <td>Queenie Teacher</td>
+              <td class="text-right">0</td>
+              <td>
+                <div class="flex items-center justify-between gap-3">
+                  <span class="font-black text-slate-700">BBE5P</span>
+                  <button type="button" class="ui basic button !p-2" style="--flatify__border-radius: 12px;">
+                    <i class="fa-solid fa-rotate-right"></i>
+                  </button>
+                </div>
+              </td>
+              <td>
+                <span class="inline-flex items-center gap-2 px-4 py-2 font-black text-white"
+                  style="background:#f4b000; border-radius: 12px;">
+                  <i class="fa-regular fa-clock"></i> Pending
+                </span>
+              </td>
+              <td class="text-center">
+                <a
+                class="ui blue button whitespace-nowrap"
+                style="--flatify__border-radius: 12px;"
+                href="/guybriggs/educators/tutorial/?course=ECON1101-S2-UNSW&tutorial=Example%20class"
+                >
+                View details
+                </a>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- big add tutorial button (full width like screenshot) -->
+      <button
+        type="button"
+        class="ui blue fluid button mt-6"
+        style="--flatify__border-radius: 999px;"
+      >
+        + ADD TUTORIAL
+      </button>
+
+      <!-- Enrolments (LEFT aligned with table) -->
+      <div class="mt-8 pb-10">
+        <div class="text-2xl font-black text-slate-800 text-left">
+          Enrolments (<span id="enrolmentCount">0</span>)
+        </div>
+
+        <!-- same width as + ADD TUTORIAL because both are fluid/full width -->
+        <button
+          type="button"
+          class="ui blue fluid button mt-3"
+          style="--flatify__border-radius: 999px;"
+        >
+          MANAGE ENROLMENTS
+        </button>
       </div>
     </div>
+
   </div>
-</div>
+</section>
+
+<!-- Table dividers + spacing to match screenshot -->
+<style>
+  /* vertical dividers */
+  .ui.table thead th,
+  .ui.table tbody td {
+    border-right: 1px solid rgba(148, 163, 184, 0.35); /* slate-ish */
+  }
+  .ui.table thead th:last-child,
+  .ui.table tbody td:last-child {
+    border-right: none;
+  }
+
+  /* horizontal dividers */
+  .ui.table tbody tr:not(:last-child) td {
+    border-bottom: 1px solid rgba(148, 163, 184, 0.25);
+  }
+
+  /* tighten table spacing */
+  .ui.table thead th {
+    padding-top: 1rem !important;
+    padding-bottom: 1rem !important;
+    font-weight: 900 !important;
+  }
+  .ui.table tbody td {
+    padding-top: 1.1rem !important;
+    padding-bottom: 1.1rem !important;
+    vertical-align: middle;
+  }
+</style>
+
+<script>
+  // Semantic UI init (checkboxes, etc.)
+  if (window.$ && $.fn.checkbox) {
+    $('.ui.checkbox').checkbox();
+  }
+
+  // Read course code from query param (?code=...)
+  const params = new URLSearchParams(window.location.search);
+  const code = params.get('code') || '—';
+
+  document.getElementById('courseCodeHeader').textContent = code;
+
+  // Stub display values
+  if (code !== '—') {
+    document.getElementById('courseName').value = 'Microeconomics S2';
+    document.getElementById('enrollmentCount').textContent = '3005';
+  }
+</script>
+
     </main>
 
     <!-- AUTH MODAL (Semantic modal structure) -->

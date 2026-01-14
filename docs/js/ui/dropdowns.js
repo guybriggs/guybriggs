@@ -17,6 +17,10 @@ function isMenuOpen(menuEl) {
 
 export function hardHideMenu(menuEl, triggerBtn) {
   if (!menuEl) return;
+
+  // ✅ never hide the main tabs bar
+  if (menuEl.id === "navMenu") return;
+
   menuEl.classList.remove("flatify-dropdown-show", "flatify-dropdown-will-be-hidden");
   menuEl.style.display = "none";
   if (triggerBtn) triggerBtn.setAttribute("aria-expanded", "false");
@@ -24,6 +28,9 @@ export function hardHideMenu(menuEl, triggerBtn) {
 
 export function closeMenu(menuEl, triggerBtn) {
   if (!menuEl || !isMenuOpen(menuEl)) return;
+
+  // ✅ never close the main tabs bar
+  if (menuEl.id === "navMenu") return;
 
   menuEl.classList.remove("flatify-dropdown-show");
   menuEl.classList.add("flatify-dropdown-will-be-hidden");

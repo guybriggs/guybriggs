@@ -1,0 +1,114 @@
+.tabs {
+    display: flex;
+    flex-direction: row;
+}
+
+.tab {
+    color: #ced9e3;
+    border-bottom: 2px solid #ced9e3;
+    padding: 0.5em;
+    display: flex;
+    flex-direction: row;
+    gap: 1em;
+}
+
+.tab-title {
+    text-transform: uppercase;
+    font-weight: 900;
+}
+
+.tab i {
+    display: none;
+}
+
+#text-logo {
+    color: #1cb0f6;
+}
+
+.tab:hover {
+    color: var(--flatify__color-blue-primary);
+    border-color: var(--flatify__color-blue-primary);
+}
+
+.tab .flatify-tooltiptext {
+    background-color: var(--flatify__color-blue-primary);
+}
+
+.eleven.wide.column {
+    background-color: white;
+}
+
+/* ---------- Tabs: fade text + underline to white on non-course pages ---------- */
+
+.tab {
+  /* make the change animate instead of snap */
+  transition: color 250ms ease, border-color 250ms ease;
+}
+
+/* WHITE on Freeplay / Tournaments / News */
+body[data-page="freeplay"] .tab,
+body[data-page="tournaments"] .tab,
+body[data-page="news"] .tab {
+  color: rgba(255, 255, 255, 0.92);
+  border-bottom-color: rgba(255, 255, 255, 0.92);
+}
+
+/* GREY on Course-tab pages (course + educators) */
+body[data-page="course"] .tab,
+body[data-page="educators"] .tab {
+  color: #ced9e3;
+  border-bottom-color: #ced9e3;
+}
+
+/* Keep blue hover everywhere */
+body[data-page="course"] .tab:hover,
+body[data-page="freeplay"] .tab:hover,
+body[data-page="tournaments"] .tab:hover,
+body[data-page="news"] .tab:hover {
+  color: var(--flatify__color-blue-primary);
+  border-bottom-color: var(--flatify__color-blue-primary);
+}
+
+/* Hide the whole top header when scrolling down */
+#siteHeader {
+  transition: transform 220ms ease, opacity 220ms ease;
+  will-change: transform, opacity;
+}
+
+#siteHeader.header--hidden {
+  transform: translateY(-120%);
+  opacity: 0;
+  pointer-events: none;
+}
+
+#scrollTopBtn{
+  position: fixed !important;
+
+  right: 24px;
+  bottom: 24px;
+
+  left: auto;
+  top: auto;
+
+  z-index: 2000;
+
+  width: 52px;
+  height: 52px;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  border-radius: 999px;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(10px);
+  transition: opacity 200ms ease, transform 200ms ease;
+}
+
+/* Show it only when header is hidden */
+#siteHeader.header--hidden ~ #scrollTopBtn {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+}
