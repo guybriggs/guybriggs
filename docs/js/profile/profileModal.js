@@ -2,6 +2,7 @@ import { $ } from "../utils/dom.js";
 import { state } from "../state/sessionState.js";
 import { hardHideMenu, closeMenu, dropdownEls } from "../ui/dropdowns.js";
 import { setLoggedInUI } from "../auth/authUI.js";
+import { addEnvPrefix } from "../utils/addEnvPrefix.js";
 
 /* =========================
         PROFILE MODAL
@@ -14,26 +15,6 @@ const avatarOverlay = $("avatarOverlay");
 const avatarCloseBtn = $("avatarCloseBtn");
 const avatarModal = avatarOverlay ? avatarOverlay.querySelector(".ui.modal") : null;
 
-/* =========================
-        URL PREFIXING
-========================== */
-const PATH_PREFIX = (import.meta?.env?.PATH_PREFIX) || "";
-
-/**
- * Prefix internal absolute paths with PATH_PREFIX.
- * Handles "/", "/educators/", etc.
- */
-function withPrefix(path = "/") {
-  if (!path.startsWith("/")) return path;
-
-  // avoid double-prefixing
-  if (PATH_PREFIX && path.startsWith(PATH_PREFIX + "/")) {
-    return path;
-  }
-
-  return `${PATH_PREFIX}${path === "/" ? "/" : path}`;
-}
-
 function openProfileModal() {
   hardHideMenu(dropdownEls.navMenu, dropdownEls.navBrandBtn);
   hardHideMenu(dropdownEls.userMenu, dropdownEls.avatarBtn);
@@ -43,7 +24,7 @@ function openProfileModal() {
   if (profileBody) {
     profileBody.innerHTML = `
       <div class="profile-header">
-        <img class="profile-avatar" src="${u.avatarUrl}" alt="Profile avatar" />
+        <img class="profile-avatar" src="${addEnvPrefix(u.avatarUrl)}" alt="Profile avatar" />
         <div class="profile-names">
           <div class="profile-fullname" title="${u.fullName}">${u.fullName}</div>
           <div class="profile-displayname" title="${u.displayName}">${u.displayName}</div>
@@ -253,14 +234,14 @@ export function initProfileModal() {
 
       if (action === "manage-courses") {
         closeMenu(dropdownEls.userMenu, dropdownEls.avatarBtn);
-        window.location.href = withPrefix("/educators/");
+        window.location.href = addEnvPrefix("educators/");
         return;
       }
 
       if (action === "signout") {
         setLoggedInUI(false);
         hardHideMenu(dropdownEls.userMenu, dropdownEls.avatarBtn);
-        window.location.href = withPrefix("/");
+        window.location.href = addEnvPrefix("");
         return;
       }
     });

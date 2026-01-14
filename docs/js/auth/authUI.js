@@ -1,6 +1,7 @@
 import { $ } from "../utils/dom.js";
 import { state } from "../state/sessionState.js";
 import { hardHideMenu, dropdownEls } from "../ui/dropdowns.js";
+import { addEnvPrefix } from "../utils/addEnvPrefix.js";
 
 /* =========================
         AUTH UI SWAP (NO PERSISTENCE)
@@ -15,7 +16,7 @@ export function setLoggedInUI(isLoggedIn) {
   if (isLoggedIn) {
     authArea?.classList.add("hidden");
     userDropdown?.classList.remove("hidden");
-    if (headerAvatarImg) headerAvatarImg.src = state.user.avatarUrl;
+    if (headerAvatarImg) headerAvatarImg.src = addEnvPrefix(state.user.avatarUrl);
 
     hardHideMenu(dropdownEls.userMenu, dropdownEls.avatarBtn);
   } else {
